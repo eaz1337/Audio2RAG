@@ -1,0 +1,45 @@
+# audio2rag configuration.
+# The rules behind these fields live in CLAUDE.md and spec.md — this file is just the
+# runtime shape. Spoken language of recordings is data, not code: it lives here, never
+# hardcoded in src/ (see CLAUDE.md "Language").
+
+asr:
+  backend: assemblyai        # assemblyai | deepgram | whisper-local  (spec.md §1)
+  language: pl                # spoken language default; NOT the code/docs language
+  whisper_local:               # only read when backend: whisper-local
+    model: large-v3
+    vad_filter: true
+    word_timestamps: true
+    condition_on_previous_text_max_minutes: 30   # disable condition_on_previous_text past this
+    diarize: false              # requires HF_TOKEN + the [diarize] extra; see ADR 0002
+
+ingest:
+  # Extensions accepted by extract/discover.py without re-encoding (spec.md Starter
+  # acceptance criteria references "all listed audio formats" — this is that list).
+  supported_extensions: [mp3, wav, m4a, flac, ogg, mp4, mov, webm]
+  render_default: []           # renderers are opt-in; nothing generated unless --render is passed
+
+chunking:                      # [STANDARD] spec.md §3
+  target_tokens: 500           # spec's range is 400-600; this is the working default
+  overlap_ratio: 0.15
+  pause_threshold_s: 1.5
+
+embedding:                     # [STANDARD] spec.md §4
+  model: BAAI/bge-m3
+  # Changing this forces a full reindex — collection metadata stores model+dim so a
+  # mismatch raises instead of silently querying a stale index (CLAUDE.md "Model pinning").
+
+vector_store:                  # [STANDARD] spec.md §5
+  backend: lancedb
+  path: store/
+
+retrieval:                     # [STANDARD dense-only -> ADVANCED hybrid] spec.md §6
+  dense_top_k: 30
+  sparse_top_k: 30
+  rrf_k: 60
+  rerank_top_k: 5
+  reranker_model: BAAI/bge-reranker-v2-m3
+
+answer:                        # [ADVANCED] spec.md §7
+  refusal_threshold: 0.35      # placeholder seed value — tuned against eval/ in EVAL-2
+  llm: null                    # open decision, see spec.md "Open decisions" #1
