@@ -46,7 +46,7 @@ safety net for a refactor, since there is nothing yet to refactor. (If you're pi
 against a repo that already has working code, do SAFE-2-style characterization tests instead of
 INIT-1 — the two are mutually exclusive, not sequential.)
 
-### [ ] INIT-1 — Repo scaffold and tooling
+### [x] INIT-1 — Repo scaffold and tooling
 **Touch:** `pyproject.toml`, `config.yaml`, `.env.example`, `.gitignore`, empty `src/` package
 tree matching CLAUDE.md's pipeline layout (`models/`, `extract/`, `transform/asr/`, `load/`,
 `retrieve/`, `cli.py`), empty `tests/` tree with `pytest` configured (`slow` marker registered,
