@@ -61,7 +61,7 @@ on the empty tree, `pip install -e ".[dev]"` succeeds.
 the alternatives considered (index PDFs directly / index plain .txt), and the consequences.
 **Out of scope:** any code.
 
-### [ ] INIT-3 — ADR: pluggable ASR backend, not offline-first
+### [x] INIT-3 — ADR: pluggable ASR backend, not offline-first
 **Touch:** `docs/decisions/0002-pluggable-asr-backend.md`
 **Done when:** ADR records that offline/on-prem is not a hard requirement for this project,
 names the default (hosted API) and fallback (self-hosted `faster-whisper`) backends, states the
@@ -73,14 +73,14 @@ names the default (hosted API) and fallback (self-hosted `faster-whisper`) backe
 
 ## Phase 2 — `[STARTER]` CANON: canonical transcript format
 
-### [ ] CANON-1 — Segment and metadata schemas
+### [x] CANON-1 — Segment and metadata schemas
 **Touch:** `src/models/schemas.py`, `tests/models/test_schemas.py`
 **Done when:** `Segment` (doc_id, seg, start, end, text, speaker|None, conf) and
 `TranscriptMeta` (per spec §2) exist as Pydantic models with validation
 (`end > start`, `seg >= 0`, non-empty text) and round-trip tests.
 **Out of scope:** using them anywhere yet.
 
-### [ ] CANON-2 — `ASRBackend` protocol and fake
+### [x] CANON-2 — `ASRBackend` protocol and fake
 **Why:** this is where the ASR pivot (ADR 0004) becomes real code — get the interface right
 before any concrete backend exists, so hosted/self-hosted are equally easy to add.
 **Touch:** `src/transform/asr/base.py` (protocol), `tests/fakes.py` (`FakeASRBackend`),
