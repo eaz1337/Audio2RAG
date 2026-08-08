@@ -8,6 +8,7 @@ dependencies = [
     "pydantic>=2.0",
     "pyyaml>=6.0",
     "typer>=0.12",
+    "fpdf2>=2.7",
 ]
 
 [project.optional-dependencies]
@@ -33,6 +34,8 @@ dev = [
     "pytest-cov>=5.0",
     "ruff>=0.6",
     "mypy>=1.11",
+    "pypdf>=4.0",  # test-only: verifies rendered PDF content, never used from src/
+    "srt>=3.5",  # test-only: parses/validates rendered SRT content, never used from src/
 ]
 
 [build-system]

@@ -90,20 +90,20 @@ before any concrete backend exists, so hosted/self-hosted are equally easy to ad
 constructor argument (dependency injection), never imports a concrete backend at module level.
 **Out of scope:** any real backend implementation — that's INGEST-1.
 
-### [ ] CANON-3 — doc_id and file hashing
+### [x] CANON-3 — doc_id and file hashing
 **Touch:** `src/extract/`, tests
 **Done when:** `compute_doc_id(path) -> str` returns `sha256(bytes)[:16]`, is stable across runs,
 and differs for different content. Same content under a different filename yields the same id.
 **Out of scope:** using doc_id for output naming yet.
 
-### [ ] CANON-4 — Write the canonical artifacts
+### [x] CANON-4 — Write the canonical artifacts
 **Touch:** `src/load/write_canonical.py`, tests
 **Done when:** `output/<doc_id>.segments.jsonl` (one JSON object per line) and
 `output/<doc_id>.meta.json` are written and can be read back into the schemas losslessly.
 Re-running overwrites, never appends — assert line count is unchanged after two runs.
 **Out of scope:** touching the PDF renderer.
 
-### [ ] CANON-5 — PDF becomes a renderer over JSONL
+### [x] CANON-5 — PDF becomes a renderer over JSONL
 **Why:** this is the load-bearing task of the whole migration.
 **Touch:** `src/load/render_pdf.py`, tests
 **Done when:** the PDF renderer takes `list[Segment]` (or reads the JSONL) instead of a raw
@@ -112,13 +112,13 @@ string and emits timestamps in the output. No code path outside
 as a default side effect of ingest.
 **Out of scope:** MD/SRT renderers.
 
-### [ ] CANON-6 — Markdown and SRT renderers
+### [x] CANON-6 — Markdown and SRT renderers
 **Touch:** `src/load/render_md.py`, `src/load/render_srt.py`, tests
 **Done when:** both read the same `list[Segment]` and produce valid output, both opt-in via
 `--render`; SRT timecodes are `HH:MM:SS,mmm` and validated by a parser in the test.
 **Out of scope:** deciding which renderers run by default — none do, by design.
 
-### [ ] CANON-7 — Transcription cache
+### [x] CANON-7 — Transcription cache
 **Touch:** `src/transform/`, CLI entry point, tests
 **Done when:** if `<doc_id>.segments.jsonl` exists and `meta.json` records a matching hash, the
 ASR backend is not invoked — assert the fake backend's call count is zero, regardless of which
