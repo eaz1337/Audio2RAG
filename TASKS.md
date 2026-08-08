@@ -130,7 +130,7 @@ money, not just time). `--force` bypasses the cache.
 
 ## Phase 3 — `[STARTER]` INGEST: ingest, metadata, CLI
 
-### [ ] INGEST-1 — Hosted ASR backend (default)
+### [x] INGEST-1 — Hosted ASR backend (default)
 **Touch:** `src/transform/asr/hosted.py`, `config.yaml`, tests (against `FakeASRBackend`/mocked HTTP)
 **Done when:** a real hosted backend (AssemblyAI or Deepgram nova-3) implements `ASRBackend`,
 returns segments with speaker labels from the API's diarization, and is selected via

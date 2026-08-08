@@ -6,6 +6,9 @@
 asr:
   backend: assemblyai        # assemblyai | deepgram | whisper-local  (spec.md §1)
   language: pl                # spoken language default; NOT the code/docs language
+  assemblyai:                   # only read when backend: assemblyai
+    poll_interval_s: 3          # how often to poll for transcript completion
+    poll_timeout_s: 1800        # give up after this long (30 min) and raise
   whisper_local:               # only read when backend: whisper-local
     model: large-v3
     vad_filter: true
