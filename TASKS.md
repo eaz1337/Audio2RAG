@@ -16,11 +16,14 @@ scope-of-work: **Starter = phases 1–3, Standard = phases 4–6 (dense-only), A
 | 4 | Chunking | `CHUNK` | 2 | **Standard** | Speech split on pauses and speaker turns, not blindly |
 | 5 | Index | `INDEX` | 4 | **Standard** | Embeddings in a local vector store, idempotent |
 | 6 | Search | `SEARCH` | 6 | **Standard** (dense+filters) / **Advanced** (hybrid+rerank+expansion) | Retrieval, from "find the chunk" to "grounded answer" |
-| 7 | Answer | `ANSWER` | 4 | **Advanced** | Answers with citations, refusal when unsupported |
+| 6.5 | Smoke test | `SMOKE` | 5 | — (internal validation, not sellable) | A real `ask` on real audio, dense-only, *before* paying for hybrid/rerank/eval build-out |
+| 7 | Answer | `ANSWER` | 1 | **Advanced** | Swap in hybrid retrieval + measured threshold behind the same `ask` command |
 | 8 | Eval | `EVAL` | 3 | **Advanced** | Measured quality, tuning, optional UI |
 
 Task IDs are `PREFIX-n` (e.g. `CANON-5`). Each task is also tagged `[STARTER]` / `[STANDARD]` /
-`[ADVANCED]` so a scope-of-work for a given tier can be extracted by grepping the tag.
+`[ADVANCED]` so a scope-of-work for a given tier can be extracted by grepping the tag. `SMOKE-*`
+tasks are tagged `[VALIDATION]` instead — deliberately excluded from that grep, since they are a
+build-order shortcut for early signal, not something any tier pays for on their own.
 
 ## How to work through this
 
@@ -275,9 +278,24 @@ clamped at document start/end, with no duplicated text when two hits are adjacen
 
 ---
 
-## Phase 7 — `[ADVANCED]` ANSWER: answering
+## Phase 6.5 — `[VALIDATION]` SMOKE: early answer path (validate before hardening)
 
-### [ ] ANSWER-1 — Answer and Citation schemas
+**Why this phase exists:** `SEARCH-2` (BM25) through `SEARCH-6` (expansion) plus `EVAL-1`'s
+harness are expensive to build and easy to over-invest in before you know the basic idea works on
+your own recordings. This phase pulls a minimal version of Phase 7's `ask` path forward, wired to
+**dense-only search from `SEARCH-1`/`SEARCH-5`** — no BM25, no fusion, no reranker, no context
+expansion. Good enough to ask a real question about a real recording and see whether the answer is
+even in the right neighborhood, long before the Advanced retrieval stack is done.
+
+Tasks here are tagged `[VALIDATION]`, not `[STANDARD]`/`[ADVANCED]`: this is an internal checkpoint,
+not a sellable tier deliverable. The spec's Advanced tier requires hybrid+rerank, so what's built
+here gets *superseded* by `ANSWER-5`, not shipped as-is to an Advanced client.
+
+**Depends only on:** `SEARCH-1`, `SEARCH-5` (both `[STANDARD]`). Does **not** depend on `SEARCH-2`
+(BM25), `SEARCH-3` (RRF), `SEARCH-4` (reranker), or `SEARCH-6` (expansion) — do this phase before
+those four if you want a working `ask` sooner; come back for them afterward.
+
+### [ ] SMOKE-1 — Answer and Citation schemas
 **Why:** encoding "no answer without a source" in the type system is more reliable than prompting
 — this is the concrete mechanism behind any "hallucination-resistant" claim in the gig description.
 **Touch:** `src/models/schemas.py`, tests
@@ -285,24 +303,59 @@ clamped at document start/end, with no duplicated text when two hits are adjacen
 `Refusal` is a separate type. Constructing an `Answer` with zero citations raises.
 **Out of scope:** the LLM call.
 
-### [ ] ANSWER-2 — Prompts module and LLM protocol
+### [ ] SMOKE-2 — Prompts module and LLM protocol
 **Touch:** `src/retrieve/prompts.py`, `src/retrieve/llm.py`, `tests/fakes.py`
 **Done when:** all prompt strings live in `prompts.py` and are versioned; an `LLMClient` Protocol
 plus `FakeLLM` allow full answer-path tests with no model. No inline prompt strings elsewhere
 (add a test that greps `src/` for them if useful).
-**Out of scope:** choosing the production LLM — still an open decision in the spec.
+**Out of scope:** choosing the production LLM for real — pick something that runs today (even a
+cheap API model) to unblock this phase. The real choice (spec.md "Open decisions" #1) gets revisited
+once `ANSWER-5` hardens the pipeline and there's eval data to decide with.
 
-### [ ] ANSWER-3 — Threshold and refusal path
+### [ ] SMOKE-3 — Naive threshold and refusal path, dense-only
 **Touch:** `src/retrieve/answer.py`, tests
-**Done when:** when the top reranked score falls below the configured threshold, the pipeline
-returns `Refusal` without calling the LLM at all (assert `FakeLLM` was not invoked).
-**Out of scope:** tuning the threshold — EVAL-2.
+**Done when:** given only `dense_search` results (no fusion/rerank), a top score below the
+configured threshold returns `Refusal` without calling the LLM (assert `FakeLLM` was not invoked).
+This threshold is a throwaway starting guess, not tuned — it exists so the refusal *mechanism* is
+real from day one, not to be accurate yet.
+**Out of scope:** tuning the threshold — that happens for real once retrieval is hardened
+(`ANSWER-5`) and measured (`EVAL-1`).
 
-### [ ] ANSWER-4 — `ask` command
+### [ ] SMOKE-4 — `ask` command, dense-only
 **Touch:** `src/cli.py`, tests
-**Done when:** `audio2rag ask "..." [filters]` prints the answer with `[title, HH:MM:SS]`
-citations and the source audio path. `--json` emits the `Answer` model.
-**Out of scope:** the web UI.
+**Done when:** `audio2rag ask "..." [filters]` works end-to-end against a real (or fixture) store
+built from `SEARCH-1`, and prints an answer or a refusal with `[title, HH:MM:SS]` citations and the
+source audio path. `--json` emits the `Answer` model.
+**Out of scope:** hybrid retrieval, the web UI.
+
+### [ ] SMOKE-5 — Your own reference questions
+**Why:** a handful of real questions about recordings you actually care about is worth more right
+now than a polished 30-question harness you can't act on for another five tasks. This set is not
+thrown away — grow it into `EVAL-1`'s ~30-question set later instead of starting from scratch.
+**Touch:** `eval/smoke_questions.yaml` (5-10 entries: question, doc_id, expected timestamp window),
+a short one-off script (exploration only, not `src/`) that runs each through `SMOKE-4`'s `ask` and
+prints the result next to the expected answer for manual eyeballing.
+**Done when:** you've run these 5-10 questions on real audio and formed an actual opinion — "close
+enough to be worth hardening" or "chunking/retrieval is off, Advanced work would be premature" —
+before spending time on `SEARCH-2..4,6` or `EVAL-1`.
+**Out of scope:** recall@5/MRR scoring — that's `EVAL-1`, once there's enough signal to justify it.
+
+---
+
+## Phase 7 — `[ADVANCED]` ANSWER: harden the answer path
+
+Everything reusable from the smoke test (Phase 6.5) — schemas, prompts, the `LLMClient` protocol,
+CLI wiring — carries over unchanged. This phase's only job is to swap the retrieval `SMOKE-3`/`-4`
+used (dense-only) for the real Advanced pipeline (hybrid + RRF + reranker + context expansion), and
+set the refusal threshold from measured data instead of a guess.
+
+### [ ] ANSWER-5 — Wire hybrid retrieval into `ask`
+**Touch:** `src/retrieve/answer.py`, `src/cli.py`, tests
+**Done when:** `ask` calls the full `SEARCH-2..4,6` pipeline (BM25 + RRF + reranker + context
+expansion) instead of `SMOKE-3`'s dense-only path; the refusal threshold is set from `EVAL-1`
+numbers, not the `SMOKE-3` placeholder; `--no-rerank` still works and falls back toward `SMOKE-3`'s
+behavior, so before/after is directly comparable.
+**Out of scope:** the web UI — that's `EVAL-3`.
 
 ---
 
@@ -344,12 +397,21 @@ INIT-1 ─ INIT-2 ─ INIT-3 ─ CANON-1 ─ CANON-2 ─ CANON-3 ─ CANON-4 ─
                         │
                         └─ SEARCH-1 ─ SEARCH-5 ──────────────────────────┐  ◄── Standard ends here
                               │                                          │
+                              ├─ SMOKE-1..5 (dense-only, [VALIDATION]) ──┐│
+                              │                                         ││
                               └─ SEARCH-2 ─┬─ SEARCH-3 ─ SEARCH-4 ─ SEARCH-6 ─┐
                                  (BM25)    ┘                                  │
                                                                                ▼
-                                      ANSWER-1..4 ─ EVAL-1 ─ EVAL-2 ─ EVAL-3  ◄── Advanced
+                                              ANSWER-5 ─ EVAL-1 ─ EVAL-2 ─ EVAL-3  ◄── Advanced
 ```
+
+`SMOKE-1..5` branches directly off `SEARCH-1`/`SEARCH-5` and does **not** block or get blocked by
+`SEARCH-2/3/4/6` — run it in parallel with, or before, that Advanced retrieval work to get a real
+`ask` on real audio early. `ANSWER-5` is the only task that needs both branches: it takes the
+`SMOKE` artifacts and rewires them onto the hardened `SEARCH-2..4,6` pipeline.
 
 **CANON-5** is the riskiest task (it rewires the existing output path) and **CHUNK-1** is the
 highest-leverage one (chunk quality caps everything downstream). Give those two the most
-review attention regardless of which tier a client has bought.
+review attention regardless of which tier a client has bought. **SMOKE-5** is where you decide,
+with real evidence instead of a guess, whether the Advanced retrieval investment (`SEARCH-2..4,6`)
+is even worth making yet.

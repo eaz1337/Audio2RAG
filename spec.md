@@ -2,80 +2,35 @@
 
 ## Goal
 
-This is a **meeting intelligence / organizational memory** product, not a transcription tool.
-The category: companies record lectures, training sessions, and meetings; that knowledge normally
-dies in a folder of mp3 files. Audio2RAG turns those recordings into a queryable knowledge base —
-"what did we decide about the Q3 budget?" → an answer with a link to the exact minute it was said.
-(Same category as Otter, Fireflies, Fathom's meeting-intelligence features.)
+A **meeting intelligence / organizational memory** product, not a transcription tool. Companies
+record lectures, training sessions and meetings; that knowledge dies in a folder of mp3 files.
+Audio2RAG turns those recordings into a queryable knowledge base — "what did we decide about the
+Q3 budget?" → an answer with a link to the exact minute it was said.
 
-**Audio-to-PDF transcription is not the differentiator.** It's a commodity solved by
-faster-whisper/WhisperX/Buzz/MacWhisper, or by hosted APIs (AssemblyAI, Deepgram, OpenAI).
-What isn't commodity — and is most of this spec — is everything from chunking onward: retrieval
-tuned for Polish, grounded answers, citations anchored to a timestamp, and refusal instead of
-confabulation when the answer isn't in the recordings.
+Audio-to-PDF transcription is a commodity (faster-whisper, AssemblyAI, Deepgram). The product is
+everything from chunking onward: retrieval tuned for Polish, grounded answers, citations anchored
+to a timestamp, and refusal instead of confabulation when the answer isn't in the recordings.
+
+Design rationale is not repeated here — see
+[ADR 0001](docs/decisions/0001-jsonl-as-canonical-source.md) (why JSONL, not PDF, is canonical) and
+[ADR 0002](docs/decisions/0002-pluggable-asr-backend.md) (why ASR isn't assumed local).
 
 ---
 
 ## Tiers
 
-The spec is written so each tier below is a **complete, shippable, demoable product** — not a
-partial build of the next one. A client who only buys Starter gets something genuinely useful,
-not a stub. This mirrors how the project is actually built: each tier is a stopping point where
-tests are green and the tool works end to end.
+Each tier is a **complete, shippable product**, not a partial build of the next one, and a stopping
+point where tests are green and the tool works end to end.
 
 | | **Starter** | **Standard** | **Advanced** |
 |---|---|---|---|
 | **Positioning** | Reliable batch transcription tool | + searchable knowledge base | + grounded Q&A, hallucination-resistant |
 | **Client can now...** | turn a folder of recordings into clean, timestamped transcripts (PDF/MD/SRT) | ask "find where X was discussed" and jump to the moment | ask a question in plain language and get a sourced answer |
 | **Maps to** (`TASKS.md`) | INIT, CANON, INGEST | + CHUNK, INDEX, SEARCH (dense only) | + SEARCH (hybrid+rerank+filters), ANSWER, EVAL |
-| **Spec sections below** | §1–2, §8, §9 (partial), §10 | + §3–6 (dense-only), §9 (search) | + §6 (full), §7, §9 (ask), §11 (eval) |
+| **Spec sections** | §1–2, §8, §9 (partial), §10 | + §3–6 (dense-only), §9 (search) | + §6 (full), §7, §9 (ask), §11 |
 
-Sections are tagged `[STARTER]` / `[STANDARD]` / `[ADVANCED]` so you can hand a client-facing
-excerpt of just their tier without editing the document.
-
----
-
-## `[STARTER]` ASR is a pluggable backend, not a design commitment
-
-Offline/on-premise is **not a hard requirement** by default (confirmed for this project —
-recordings may go through a cloud API; revisit if a specific client needs on-prem). That changes
-what's worth building in-house:
-
-| Backend | When to use | Notes |
-|---|---|---|
-| **Hosted API** (AssemblyAI, Deepgram nova-3) | **default** | word-level timestamps + diarization in one call, no GPU/model management, scales without local compute planning |
-| OpenAI Whisper API | fallback | no built-in diarization — pair with a separate diarization step if needed |
-| Self-hosted `faster-whisper` | only if: cost at high volume justifies it, or a specific client needs on-prem | keep behind an `ASRBackend` interface so it's swappable, not load-bearing |
-
-**Design consequence:** ASR sits behind a small interface (`transcribe(audio) -> list[Segment]`).
-Whichever backend is selected, everything downstream — canonical JSONL, chunking, indexing,
-retrieval — is unaffected. Do not couple the rest of the pipeline to any one backend's output shape.
-This is also what makes Starter → Standard → Advanced a clean upsell instead of a rewrite: nothing
-built at Starter has to change when Standard adds the index.
-
-Practical note: verify before sending a client's recordings to a third party that no meeting on
-them touches something that shouldn't leave the building (salaries, personal data) — "not a hard
-compliance requirement" doesn't mean "no judgment needed."
-
----
-
-## `[STARTER]` Key decision: the transcript, not PDF, is the source of truth
-
-The canonical transcript (`.segments.jsonl`) is the single source of truth from Starter onward.
-PDF is **one of several renderers** over it, generated on request.
-
-Why PDF is a poor foundation to build on (even at Starter, before RAG exists):
-
-| Problem | Consequence |
-|---|---|
-| PDF is a presentation format, not a data format | you'd have to parse it back out (`pdfplumber`) — round-tripping for nothing |
-| Temporal structure is lost | no timestamps → can't jump to a moment, can't do Standard/Advanced later without redoing this |
-| Segment and speaker boundaries are lost | chunking later would cut mid-sentence |
-| No place for metadata | course, date, presenter, tags have nowhere to live |
-
-**Rule:** the transcript is written once, in canonical form; PDF/MD/SRT are *rendered* from it,
-on request, never automatically. Never the reverse. This single rule is why Standard and Advanced
-can be sold later as upsells on an existing Starter delivery, instead of a rebuild.
+Sections are tagged `[STARTER]` / `[STANDARD]` / `[ADVANCED]` so a client-facing excerpt of one
+tier can be cut without editing the document.
 
 ---
 
@@ -84,9 +39,9 @@ can be sold later as upsells on an existing Starter delivery, instead of a rebui
 ```
                     ┌─────────────────────────────────────┐
   audio ──────────► │ 1. ASR  (pluggable: hosted API /     │  [STARTER]
-  (mp3/wav/mp4/...) │    self-hosted) + optional diarize   │
+  (mp3/wav/mp4/...) │    whisper-local) + optional diarize │
                     └──────────────┬──────────────────────┘
-                                   │  segments {start,end,text,speaker}
+                                   │  Segment {start,end,text,speaker,conf}
                                    ▼
                     ┌─────────────────────────────────────┐
                     │ 2. CANONICAL WRITE                  │  [STARTER]
@@ -103,42 +58,55 @@ can be sold later as upsells on an existing Starter delivery, instead of a rebui
                                                     ▼
                                         ┌─────────────────────────┐
                                         │ 6. Retrieval + reranker │  [STANDARD: dense only]
-                                        │ 7. Answer with citations│  [ADVANCED: hybrid+rerank+answer]
-                                        │    [Lecture 3, 14:22]   │
+                                        │ 7. Answer with citations│  [ADVANCED: hybrid+rerank]
+                                        │    [OS — Lecture 3,     │
+                                        │     00:14:22]           │
                                         └─────────────────────────┘
 ```
 
 Starter stops after step 2 (plus optional renderers). Standard adds 3–5 and a dense-only version
-of 6 (find the right chunk; client reads it themselves). Advanced completes 6 with hybrid
-search + reranking, and adds 7 (an actual generated answer with citations and refusal).
+of 6. Advanced completes 6 with hybrid search + reranking and adds 7.
 
 ---
 
 ## `[STARTER]` 1. ASR — transcription
 
-Behind an `ASRBackend` interface: `transcribe(audio_path, language) -> list[Segment]`.
-All backends must return segment-level timestamps and, where available, speaker labels — later
-tiers depend on both being present, so get this right even if the client only buys Starter.
+Every backend sits behind one interface:
 
-**Default: hosted API** (AssemblyAI or Deepgram nova-3).
-- Diarization included in the same call — no separate step, no HF token, no `pyannote` dependency
-- No GPU/model management, no platform-specific compute table to maintain
-- Cost scales with usage (per-minute), not with owning hardware
+```python
+class ASRBackend(Protocol):
+    def transcribe(self, path: Path, language: str) -> list[Segment]: ...
+```
 
-**Fallback / alternative: self-hosted `faster-whisper`** — kept behind the same interface:
-- `vad_filter=True` — strips silence, speedup and fewer hallucinations (meetings have a lot of dead air)
-- `word_timestamps=True` — needed for precise citation anchoring later
-- `condition_on_previous_text=False` for recordings > 30 min — limits drift and looping
-- **Diarization (optional, `--diarize`)**: `pyannote/speaker-diarization-3.1` (requires an HF token) —
-  this is the extra plumbing the hosted path avoids.
+All backends return segment-level timestamps and, where available, speaker labels — later tiers
+depend on both, so this holds even if the client only buys Starter. Nothing downstream of
+`list[Segment]` knows which backend produced it.
 
-Backend is chosen in `config.yaml` (`asr.backend: assemblyai | deepgram | whisper-local`).
-Nothing downstream of `list[Segment]` knows or cares which backend produced it.
+| Backend | When | Notes |
+|---|---|---|
+| **AssemblyAI / Deepgram nova-3** | **default** | word-level timestamps + diarization in one call, no GPU or model management |
+| OpenAI Whisper API | alternative | no built-in diarization — needs a separate diarization step |
+| `faster-whisper` (`whisper-local`) | on-prem requirement, or cost at high volume | the only path that needs CUDA, `pyannote` and an HF token |
 
-**Supported input extensions** (`config.yaml` `ingest.supported_extensions`): `mp3, wav, m4a,
-flac, ogg, mp4, mov, webm`. This is the list the Starter acceptance criterion below ("all listed
-audio formats") refers to. `extract/discover.py` rejects anything else with a warning rather than
-attempting to re-encode it.
+Backend is selected in `config.yaml` (`asr.backend: assemblyai | deepgram | whisper-local`).
+
+**`whisper-local` settings:** `vad_filter=True` (meetings have a lot of dead air — speedup and
+fewer hallucinations), `word_timestamps=True` (precise citation anchoring),
+`condition_on_previous_text=False` for recordings > 30 min (limits drift and looping).
+Diarization is optional (`--diarize`, `pyannote/speaker-diarization-3.1`, requires `HF_TOKEN`);
+when absent, ingest proceeds without speaker labels and warns.
+
+**`conf` is normalised at the interface**: `Segment.conf` is `float | None` in `0.0–1.0`, higher is
+better. Hosted backends pass their confidence through; `whisper-local` converts `avg_logprob` via
+`exp()`. Downstream code must never assume a log-probability scale.
+
+**Privacy:** with a hosted backend, recordings leave the machine. `asr.backend: whisper-local` is
+the on-prem path. Confirm per client that no recording touches something that shouldn't leave the
+building (salaries, personal data) before selecting a hosted backend.
+
+**Supported input extensions** (`config.yaml` `ingest.supported_extensions`): `mp3, wav, m4a, flac,
+ogg, mp4, mov, webm`. `extract/discover.py` rejects anything else with a warning rather than
+re-encoding it.
 
 ---
 
@@ -147,10 +115,10 @@ attempting to re-encode it.
 One line per segment:
 
 ```json
-{"doc_id":"a3f9c1b2","seg":142,"start":852.4,"end":867.1,"speaker":"SPEAKER_00","text":"Deadlock occurs when all four Coffman conditions hold...","conf":-0.21}
+{"doc_id":"a3f9c1b2","seg":142,"start":852.4,"end":867.1,"speaker":"SPEAKER_00","text":"Deadlock occurs when all four Coffman conditions hold...","conf":0.81}
 ```
 
-Plus a sidecar `output/<doc_id>.meta.json`:
+Sidecar `output/<doc_id>.meta.json`:
 
 ```json
 {
@@ -164,34 +132,38 @@ Plus a sidecar `output/<doc_id>.meta.json`:
   "date": "2026-03-04",
   "duration_s": 5412,
   "language": "pl",
-  "model": "large-v3",
+  "asr_backend": "assemblyai",
+  "asr_model": "best",
+  "diarized": true,
   "tags": ["synchronization", "deadlock"],
   "ingested_at": "2026-03-04T18:22:11Z"
 }
 ```
 
-`type` ∈ `lecture | training | meeting | interview | other` — used later to filter queries
-(Standard+ feature; the field is cheap to capture now, expensive to backfill later).
+`asr_backend` + `asr_model` record what actually produced the transcript — needed to explain
+quality differences and to decide what to re-transcribe after a backend change. Never contains
+API keys.
 
-Note: `language` refers to the **spoken content**, which stays Polish by default. Code, config
-keys, CLI, and documentation are English throughout, at every tier.
+`type` ∈ `lecture | training | meeting | interview | other` — used for query filters at Standard+;
+cheap to capture now, expensive to backfill.
+
+`language` refers to the **spoken content** (Polish by default). Code, config keys, CLI and
+documentation are English at every tier.
 
 ---
 
 ## `[STANDARD]` 3. Chunking
 
-Naive fixed-size splitting hurts quality. Rules:
-
 - **Target 400–600 tokens** per chunk, **~15% overlap** (2–3 segments)
 - **Preferred boundaries**: pause > 1.5 s between segments, sentence end, speaker change
 - A chunk never splits a segment in half
-- Every chunk carries `start`/`end` in seconds → a citation points straight to the minute of audio
+- Every chunk carries `start`/`end` in seconds → a citation points to the minute of audio
 
-**Contextual header** (contextual retrieval) — prepended to the text *before* embedding. Cheap
-accuracy win, because an isolated transcript fragment is often incomprehensible on its own:
+**Contextual header** — prepended to the text *before* embedding, because an isolated transcript
+fragment is often incomprehensible on its own:
 
 ```
-[Operating Systems — Lecture 3, 2026-03-04, Dr. Kowalski, 14:12–14:27]
+[Operating Systems — Lecture 3, 2026-03-04, Dr. Kowalski, 00:14:12–00:14:27]
 ...chunk text...
 ```
 
@@ -199,41 +171,40 @@ accuracy win, because an isolated transcript fragment is often incomprehensible 
 
 ## `[STANDARD]` 4. Embeddings — models that handle Polish
 
-This is where anglocentric defaults hurt the most, and where "Standard" earns its price over a
-generic RAG template.
-
 | Model | Notes |
 |---|---|
-| `BAAI/bge-m3` | **default** — multilingual, 8192 ctx, emits dense + sparse in one pass, solid Polish |
+| `BAAI/bge-m3` | **default** — multilingual, 8192 ctx, solid Polish |
 | `sdadas/mmlw-retrieval-roberta-large` | Polish-specific, very strong on PIRB; needs `zapytanie: ` / `pasaż: ` prefixes |
 | `intfloat/multilingual-e5-large` | safe baseline, `query: ` / `passage: ` prefixes |
 | ~~`all-MiniLM-L6-v2`~~ | **do not use** — effectively no Polish capability |
 
-Model is configurable in `config.yaml`; **changing it forces a full reindex**. The collection
-metadata stores model name and vector dimension so mismatches are detected at query time.
+Only bge-m3's **dense** output is used. Its learned-sparse output is deliberately ignored — lexical
+matching comes from BM25 (§6), so the lexical path stays identical across embedding models and
+survives a model swap without re-tuning fusion.
+
+Model is configurable; **changing it forces a full reindex**. Collection metadata stores model name
+and vector dimension so mismatches are detected at query time.
 
 ---
 
 ## `[STANDARD]` 5. Vector store
 
-| Option | When |
-|---|---|
-| **LanceDB** | default — on-disk file, no server, good metadata filtering |
-| Chroma | simpler API, fine below roughly 100 h of recordings |
-| Qdrant (docker) | when you want native dense+sparse hybrid and multi-user access — needed at Advanced |
+**LanceDB** — on-disk file, no server, good metadata filtering. Chosen for the whole product;
+BM25 comes from a separate `bm25s` index at Advanced (§6), so no server is needed at any tier.
 
-A BM25 index (`bm25s`, or built into Qdrant) is added at **Advanced** — see §6.
+Qdrant (docker) is the documented migration path **only** if multi-user concurrent access becomes
+a requirement. It is not needed for hybrid search — `bm25s` + RRF covers that locally.
 
 ---
 
 ## `[STANDARD → ADVANCED]` 6. Retrieval
 
 **Standard scope:** dense search only. `dense_search(query, k)` returns ranked chunks; the client
-reads the chunk and jumps to its timestamp themselves. No LLM call, no synthesized answer — this
-is "smart search," not "chat with your recordings."
+reads the chunk and jumps to its timestamp. No LLM call — this is "smart search", not "chat with
+your recordings".
 
-**Advanced scope** adds everything a plain dense search gets wrong on transcripts (speech is
-verbose and full of filler, while users query with precise terminology):
+**Advanced scope** adds what plain dense search gets wrong on transcripts (speech is verbose and
+full of filler; users query with precise terminology):
 
 ```
 query
@@ -244,34 +215,35 @@ query
 
 - **Fusion**: Reciprocal Rank Fusion, `k=60`
 - **Reranker**: `BAAI/bge-reranker-v2-m3` — cross-encoder, handles Polish well; usually the single
-  largest quality jump in the whole pipeline — this is the main thing separating a "real RAG" from
-  a demo that falls apart on a hard question
+  largest quality jump in the pipeline
 - **Filters**: `--course`, `--type`, `--after`, `--speaker`, `--tag`
-- **Context expansion**: the LLM receives each chunk ± 1 adjacent segment (the answer to a question
-  often starts one sentence earlier)
+- **Context expansion**: the LLM receives each chunk ± 1 adjacent segment (an answer often starts
+  one sentence earlier)
 
 ---
 
 ## `[ADVANCED]` 7. Answering
 
-- Every answer carries citations formatted as `[title, HH:MM:SS]`
-- If retrieval returns nothing above the score threshold, the model must say
-  "not present in the recordings" rather than improvise — this is the concrete, testable claim
-  behind "hallucination-resistant" in the gig description, backed by the eval harness in §11
-- Citations are clickable → open the audio file at that second (UI), or print path + timestamp (CLI)
+- **Canonical citation format: `[title, HH:MM:SS]`** — e.g. `[Operating Systems — Lecture 3,
+  00:14:22]`. This exact form is used in answers, in chunk contextual headers (§3) and in the eval
+  harness (§11); nothing renders timestamps differently.
+- If retrieval returns nothing above the score threshold, the answer is an explicit refusal
+  ("not present in the recordings"), never an improvisation. This is the testable claim behind
+  "hallucination-resistant", backed by §11.
+- Citations are clickable → open the audio at that second (UI), or print path + timestamp (CLI)
 
 ---
 
 ## `[STARTER]` 8. Idempotency
 
-Built once at Starter, holds at every tier without modification:
+Built at Starter, unchanged at every tier:
 
 - `doc_id = sha256(audio bytes)[:16]` — the same file under a different name won't duplicate
-- Re-ingest: `DELETE WHERE doc_id = ?` → `INSERT` (delete-then-insert, not per-chunk upsert — the
-  chunk count can change with a different model or parameters, relevant once Standard adds an index)
+- Re-ingest: `DELETE WHERE doc_id = ?` → `INSERT` (not per-chunk upsert — chunk count changes with
+  a different model or parameters)
 - Metadata-only changes (e.g. fixing a presenter's name) → `audio2rag relabel`, no re-transcription
-- Transcription is cached: if `.segments.jsonl` exists and the hash matches, ASR does not run
-  again (it is by far the most expensive stage, hosted or self-hosted)
+- Transcription is cached: if `.segments.jsonl` exists and the hash matches, ASR does not run again
+  (by far the most expensive stage, hosted or local)
 
 ---
 
@@ -310,76 +282,68 @@ audio2rag serve --port 8080     # local chat UI, player seeks to cited timestamp
 | `output/<doc_id>.pdf` | reading / printing (DejaVuSans, correct Polish glyphs) | Starter |
 | `output/<doc_id>.md` | notes, git, Obsidian — headings with timestamps | Starter |
 | `output/<doc_id>.srt` | subtitles, if the recording has a video track | Starter |
-| `store/` | LanceDB + BM25 index | Standard (BM25 part: Advanced) |
+| `store/lance/` | LanceDB vector index | Standard |
+| `store/bm25/` | BM25 index (`bm25s`) | Advanced |
 
 ---
 
 ## Platform support
 
-Applies at Starter and holds at every later tier. The embedding/reranker columns only become
-relevant at Standard/Advanced. The "ASR device" column only matters if `asr.backend: whisper-local`
-is selected; with a hosted API backend, no local GPU/CPU work happens for transcription at all.
+The ASR-device column applies **only** to `asr.backend: whisper-local`; with a hosted backend no
+local compute is used for transcription. Embedding/reranker columns apply from Standard/Advanced.
 
-| OS | ASR device (self-hosted only) | Compute | Embeddings (Standard+) | Reranker (Advanced) |
+| OS | ASR device (whisper-local only) | Compute | Embeddings (Standard+) | Reranker (Advanced) |
 |---|---|---|---|---|
 | Windows 11+ | CUDA | float16 | CUDA | CUDA |
 | Linux | CPU (CUDA if present) | int8 | CPU/CUDA | CPU/CUDA |
 | macOS (Apple Silicon) | CPU | int8 | MPS | MPS |
 
-A CPU reranker adds roughly 1–3 s per query at 60 candidates — acceptable, though on a large
-corpus it's worth dropping to top 20 candidates.
+A CPU reranker adds roughly 1–3 s per query at 60 candidates — acceptable; on a large corpus drop
+to top 20 candidates.
 
 ---
 
-## Acceptance criteria (per tier — a tier ships when its own list is green)
+## Acceptance criteria (a tier ships when its own list is green)
 
 **Starter:**
-- Hosted API: 60 min of audio transcribes well under the recording's own duration
-  (API-bound — track p50/p95 turnaround, not a fixed local benchmark)
-- Self-hosted fallback: < 5 min on Windows/CUDA, < 15 min on CPU, for 60 min of audio
-- All listed audio formats supported without re-encoding
-- PDF (when rendered) shows Polish characters correctly; nothing rendered unless requested
+- Hosted backend: 60 min of audio completes in **≤ 15 min wall-clock, p95 over ≥ 10 runs**
+  (API-bound; the number is a regression guard, not a compute benchmark)
+- Every listed audio format ingests without re-encoding
+- PDF (when rendered) shows Polish characters correctly; nothing is rendered unless requested
 - Idempotent: 2× ingest = 1 canonical transcript, no duplication, no data loss
+- `meta.json` records `asr_backend` / `asr_model` and contains no secrets
+- *Gates `whisper-local` only:* 60 min of audio in < 5 min on CUDA, < 15 min on CPU
 
 **Standard (adds):**
 - Re-ingesting the same file does **not** increase the chunk count in the store
 - Metadata filters (`--course`) genuinely narrow results to a single course
-- An embedding-model change is detected and blocks querying a stale index, with a
-  "run `reindex`" message
-- Dense search returns a relevant chunk in the top 5 for an in-corpus query, in a quick
-  spot-check set (~10 questions) — full recall@5 measurement is an Advanced deliverable
+- An embedding-model change is detected and blocks querying a stale index, with a "run `reindex`"
+  message
+- Dense search returns a relevant chunk in the top 5 for an in-corpus query, on a ~10-question
+  spot-check set (full recall@5 measurement is an Advanced deliverable)
 
 **Advanced (adds):**
-- Every answer contains at least one citation with `doc_id` + timestamp, accurate to ± 5 s
+- Every answer carries ≥ 1 citation with `doc_id` + timestamp, accurate to ± 5 s, in the §7 format
 - A Polish-language query for a term spoken in a recording returns the right fragment in the top 5
-  (~30 test questions over a reference corpus; target recall@5 ≥ 0.85, measured by the eval harness)
-- A query about something absent from the corpus produces an explicit refusal, not a confabulation
-- Query latency: < 3 s on CUDA, < 8 s on CPU (excluding LLM generation time and ASR API latency)
+  (~30 test questions, target recall@5 ≥ 0.85, measured by §11)
+- A query about something absent from the corpus produces an explicit refusal
+- Query latency < 3 s on CUDA, < 8 s on CPU (excluding LLM generation and ASR API latency)
 
 ---
 
 ## `[ADVANCED]` 11. Evaluation
 
-This is what turns "hallucination-resistant" from a marketing claim into a number a client can
-be shown: ~30 reference questions with known correct doc_id + timestamp window, scored for
-recall@5 and MRR, with a committed baseline. Selling point: you can hand a client a before/after
-table when tuning chunk size, candidate counts, or the refusal threshold — a generic RAG gig
-rarely offers this.
+~30 reference questions with known correct `doc_id` + timestamp window, scored for **recall@5** and
+**MRR**, with a committed baseline. Turns "hallucination-resistant" into a number, and gives a
+before/after table when tuning chunk size, candidate counts or the refusal threshold.
 
 ---
 
 ## Open decisions
 
-1. **Answering LLM** (Advanced) — local (Bielik / Llama 3.1 via Ollama) or API? With ASR already
-   going through a cloud API, "keep everything local" is no longer a constraint forcing this
-   choice — it's now purely a quality-vs-cost call. API models currently do noticeably better
-   Polish.
-2. ~~Diarization on by default?~~ **Resolved by the ASR pivot** — the default hosted backend
-   returns diarization in the same call at no extra integration cost, so it can be on by default
-   for every `type`, not just `meeting`.
-3. **Collect user transcript corrections?** (domain terminology, surnames) — a simple
-   `corrections.yaml` with post-ASR replacement rules is a large win for very little cost, doable
-   at any tier.
-4. **Audio retention** — keep original files after ingest (needed for timestamp playback in
-   Advanced's `serve`), or store paths only? Worth deciding deliberately once audio has already
-   left the building for transcription once.
+1. **Answering LLM** (Advanced) — local (Bielik / Llama 3.1 via Ollama) or API? Purely a
+   quality-vs-cost call; API models currently do noticeably better Polish.
+2. **Collect user transcript corrections?** A `corrections.yaml` with post-ASR replacement rules
+   (domain terminology, surnames) — large win for little cost, doable at any tier.
+3. **Audio retention** — keep original files after ingest (needed for timestamp playback in
+   `serve`), or store paths only?
