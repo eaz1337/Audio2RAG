@@ -55,7 +55,7 @@ tree matching CLAUDE.md's pipeline layout (`models/`, `extract/`, `transform/asr
 on the empty tree, `pip install -e ".[dev]"` succeeds.
 **Out of scope:** any pipeline logic, any ADR content.
 
-### [ ] INIT-2 — ADR: JSONL as canonical source
+### [x] INIT-2 — ADR: JSONL as canonical source
 **Touch:** `docs/decisions/0001-jsonl-as-canonical-source.md`
 **Done when:** ADR records the decision "JSONL is the source of truth, PDF is a renderer",
 the alternatives considered (index PDFs directly / index plain .txt), and the consequences.
