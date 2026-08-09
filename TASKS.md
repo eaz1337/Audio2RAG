@@ -138,7 +138,7 @@ selected via `asr.backend: assemblyai | deepgram`. API key read from the environ
 `meta.json` records `asr_backend` and `asr_model`. No non-`slow` test makes a real HTTP call.
 **Out of scope:** the local fallback — that's INGEST-5.
 
-### [ ] INGEST-2 — `ingest` subcommand with metadata flags
+### [x] INGEST-2 — `ingest` subcommand with metadata flags
 **Touch:** `src/cli.py`, tests
 **Done when:** `audio2rag ingest <path> --type --title --course --date --speaker --tag --render`
 works, values land in `meta.json`, `type` is validated against the enum
