@@ -146,7 +146,7 @@ works, values land in `meta.json`, `type` is validated against the enum
 (none by default).
 **Out of scope:** `ask`, `serve`.
 
-### [ ] INGEST-3 — Directory ingest
+### [x] INGEST-3 — Directory ingest
 **Touch:** `src/extract/discover.py`, CLI, tests
 **Done when:** `ingest <dir> --recursive` finds all supported extensions, skips unsupported files
 with a warning, and continues past a single file's failure instead of aborting the batch.

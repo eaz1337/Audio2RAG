@@ -328,3 +328,159 @@ class TestBuildAsrBackend:
     def test_unimplemented_backend_raises(self):
         with pytest.raises(ValueError, match="not implemented"):
             cli.build_asr_backend({"asr": {"backend": "deepgram"}})
+
+
+class FailingBackend:
+    """Raises on a chosen path, so batch-ingest failure handling can be exercised without
+    a real backend."""
+
+    def __init__(self, segments, fail_on: str):
+        self._segments = segments
+        self._fail_on = fail_on
+        self.calls: list = []
+
+    def transcribe(self, path, language):
+        self.calls.append((path, language))
+        if path.name == self._fail_on:
+            raise RuntimeError("boom")
+        return self._segments
+
+
+class TestIngestDirectory:
+    def test_ingests_every_supported_file_and_skips_unsupported(self, tmp_path):
+        source_dir = tmp_path / "source"
+        source_dir.mkdir()
+        (source_dir / "a.wav").write_bytes(SAMPLE_A.read_bytes())
+        (source_dir / "b.wav").write_bytes(b"different-bytes")
+        (source_dir / "notes.txt").write_text("not audio")
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        backend = FakeASRBackend([make_segment()])
+
+        results = cli.ingest_directory(
+            source_dir,
+            recursive=False,
+            supported_extensions=["wav"],
+            backend=backend,
+            language="pl",
+            output_dir=output_dir,
+            doc_type=TranscriptType.OTHER,
+            title=None,
+            course=None,
+            date=None,
+            speakers=[],
+            tags=[],
+            render_targets=[],
+            asr_model_name="fake",
+        )
+
+        assert len(results) == 2
+        assert len(backend.calls) == 2
+        assert len(list(output_dir.glob("*.meta.json"))) == 2
+
+    def test_recursive_flag_descends_into_subdirectories(self, tmp_path):
+        source_dir = tmp_path / "source"
+        (source_dir / "nested").mkdir(parents=True)
+        (source_dir / "top.wav").write_bytes(SAMPLE_A.read_bytes())
+        (source_dir / "nested" / "deep.wav").write_bytes(b"different-bytes")
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        backend = FakeASRBackend([make_segment()])
+
+        results = cli.ingest_directory(
+            source_dir,
+            recursive=True,
+            supported_extensions=["wav"],
+            backend=backend,
+            language="pl",
+            output_dir=output_dir,
+            doc_type=TranscriptType.OTHER,
+            title=None,
+            course=None,
+            date=None,
+            speakers=[],
+            tags=[],
+            render_targets=[],
+            asr_model_name="fake",
+        )
+
+        assert len(results) == 2
+
+    def test_non_recursive_ignores_subdirectories(self, tmp_path):
+        source_dir = tmp_path / "source"
+        (source_dir / "nested").mkdir(parents=True)
+        (source_dir / "top.wav").write_bytes(SAMPLE_A.read_bytes())
+        (source_dir / "nested" / "deep.wav").write_bytes(b"different-bytes")
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        backend = FakeASRBackend([make_segment()])
+
+        results = cli.ingest_directory(
+            source_dir,
+            recursive=False,
+            supported_extensions=["wav"],
+            backend=backend,
+            language="pl",
+            output_dir=output_dir,
+            doc_type=TranscriptType.OTHER,
+            title=None,
+            course=None,
+            date=None,
+            speakers=[],
+            tags=[],
+            render_targets=[],
+            asr_model_name="fake",
+        )
+
+        assert len(results) == 1
+
+    def test_one_file_failing_does_not_abort_the_batch(self, tmp_path, capsys):
+        source_dir = tmp_path / "source"
+        source_dir.mkdir()
+        (source_dir / "bad.wav").write_bytes(SAMPLE_A.read_bytes())
+        (source_dir / "good.wav").write_bytes(b"different-bytes")
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        backend = FailingBackend([make_segment()], fail_on="bad.wav")
+
+        results = cli.ingest_directory(
+            source_dir,
+            recursive=False,
+            supported_extensions=["wav"],
+            backend=backend,
+            language="pl",
+            output_dir=output_dir,
+            doc_type=TranscriptType.OTHER,
+            title=None,
+            course=None,
+            date=None,
+            speakers=[],
+            tags=[],
+            render_targets=[],
+            asr_model_name="fake",
+        )
+
+        assert len(results) == 1
+        assert len(backend.calls) == 2
+        assert "bad.wav" in capsys.readouterr().err
+
+    def test_directory_ingest_via_ingest_command(self, tmp_path, monkeypatch):
+        source_dir = tmp_path / "source"
+        source_dir.mkdir()
+        (source_dir / "a.wav").write_bytes(SAMPLE_A.read_bytes())
+        (source_dir / "b.wav").write_bytes(b"different-bytes")
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        backend = FakeASRBackend([make_segment()])
+        config = {
+            "asr": {"backend": "fake", "language": "pl"},
+            "ingest": {"render_default": [], "supported_extensions": ["wav"]},
+        }
+        monkeypatch.setattr(cli, "load_config", lambda: config)
+        monkeypatch.setattr(cli, "build_asr_backend", lambda config: backend)
+        monkeypatch.setattr(cli, "OUTPUT_DIR", output_dir)
+
+        result = runner.invoke(cli.app, ["ingest", str(source_dir), "--recursive"])
+
+        assert result.exit_code == 0, result.output
+        assert len(list(output_dir.glob("*.meta.json"))) == 2
