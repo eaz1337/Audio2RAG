@@ -202,7 +202,7 @@ Both asserted separately.
 
 ## Phase 5 — `[STANDARD]` INDEX: embeddings and vector store
 
-### [ ] INDEX-1 — Embedder protocol and fake
+### [x] INDEX-1 — Embedder protocol and fake
 **Touch:** `src/transform/embed.py`, `tests/fakes.py`
 **Done when:** an `Embedder` Protocol (`embed(texts) -> ndarray`, `name`, `dim`) exists, plus a
 `FakeEmbedder` producing deterministic vectors from a text hash. The real `bge-m3` implementation is
@@ -210,7 +210,7 @@ behind the `[rag]` extra with a lazy import and marked `slow`. Dense output only
 runs locally regardless of ASR backend — see ADR 0002.
 **Out of scope:** the store.
 
-### [ ] INDEX-2 — LanceDB writer
+### [x] INDEX-2 — LanceDB writer
 **Touch:** `src/load/vector_store.py`, tests (`FakeEmbedder`, temp dir)
 **Done when:** chunks are written to `store/lance/` with all metadata fields queryable; collection
 metadata records embedding model name and dim. Tests download nothing and make no network call.
