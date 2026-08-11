@@ -22,7 +22,7 @@ def list_transcripts(output_dir: Path) -> list[TranscriptMeta]:
 
 def remove_transcript(doc_id: str, output_dir: Path) -> None:
     """Removes the canonical artifacts and any rendered files for `doc_id`. Vector-store
-    cleanup is INDEX-3's job, not this one."""
+    cleanup is the caller's job (see `cli.rm`, `load.vector_store.delete_doc`)."""
     segments_path(doc_id, output_dir).unlink(missing_ok=True)
     meta_path(doc_id, output_dir).unlink(missing_ok=True)
     for extension in _RENDER_EXTENSIONS:

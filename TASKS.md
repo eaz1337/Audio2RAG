@@ -216,13 +216,13 @@ runs locally regardless of ASR backend — see ADR 0002.
 metadata records embedding model name and dim. Tests download nothing and make no network call.
 **Out of scope:** search.
 
-### [ ] INDEX-3 — Delete-then-insert idempotency
+### [x] INDEX-3 — Delete-then-insert idempotency
 **Touch:** `src/load/vector_store.py`, `rm` command, tests
 **Done when:** ingesting the same file twice leaves the chunk count unchanged; ingesting after a
 chunk-size config change replaces cleanly with no orphans; `rm <doc_id>` removes chunks too.
 **Out of scope:** the BM25 index (SEARCH-2) — wire its deletion into this path there.
 
-### [ ] INDEX-4 — Model mismatch guard and `reindex`
+### [x] INDEX-4 — Model mismatch guard and `reindex`
 **Touch:** `src/load/vector_store.py`, CLI, tests
 **Done when:** querying a store built with a different embedder raises a clear error naming both
 models and telling the user to run `reindex`. `reindex` rebuilds from existing JSONL without

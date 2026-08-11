@@ -3,11 +3,12 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from fakes import FakeASRBackend
+from fakes import FakeASRBackend, FakeEmbedder
 
 import cli
+from load.vector_store import collection_metadata, read_chunks, write_chunks
 from load.write_canonical import read_meta
-from models.schemas import Segment, TranscriptType
+from models.schemas import Chunk, Segment, TranscriptType
 
 FIXTURES = Path(__file__).parent / "fixtures"
 SAMPLE_A = FIXTURES / "sample_a.wav"
@@ -32,6 +33,8 @@ def make_segment(**overrides) -> Segment:
 FAKE_CONFIG = {
     "asr": {"backend": "fake", "language": "pl"},
     "ingest": {"render_default": []},
+    "embedding": {"model": "fake-embedder"},
+    "chunking": {"target_tokens": 500, "overlap_ratio": 0.15, "pause_threshold_s": 1.5},
 }
 
 
@@ -645,6 +648,7 @@ class TestListCommand:
 class TestRmCommand:
     def test_removes_all_artifacts_for_doc_id(self, tmp_path, monkeypatch):
         monkeypatch.setattr(cli, "OUTPUT_DIR", tmp_path)
+        monkeypatch.setattr(cli, "STORE_DIR", tmp_path / "store")
         backend = FakeASRBackend([make_segment()])
         result_path = cli.ingest_file(
             SAMPLE_A,
@@ -667,12 +671,152 @@ class TestRmCommand:
         assert result.exit_code == 0, result.output
         assert list(tmp_path.glob(f"{doc_id}.*")) == []
 
+    def test_removes_chunks_from_vector_store(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(cli, "OUTPUT_DIR", tmp_path)
+        store_dir = tmp_path / "store"
+        monkeypatch.setattr(cli, "STORE_DIR", store_dir)
+        backend = FakeASRBackend([make_segment()])
+        result_path = cli.ingest_file(
+            SAMPLE_A,
+            backend=backend,
+            language="pl",
+            output_dir=tmp_path,
+            doc_type=TranscriptType.OTHER,
+            title=None,
+            course=None,
+            date=None,
+            speakers=[],
+            tags=[],
+            render_targets=[],
+            asr_model_name="fake",
+        )
+        doc_id = result_path.stem.removesuffix(".segments")
+        other_doc_id = "b1c2d3e4f5061708"
+        embedder = FakeEmbedder(dim=8)
+        write_chunks(
+            [
+                Chunk(
+                    doc_id=doc_id,
+                    chunk_id=0,
+                    start=0.0,
+                    end=1.5,
+                    segment_ids=[0],
+                    display_text="Hello world.",
+                    embed_text="[Lecture, 00:00:00-00:00:01]\nHello world.",
+                ),
+                Chunk(
+                    doc_id=other_doc_id,
+                    chunk_id=0,
+                    start=0.0,
+                    end=1.5,
+                    segment_ids=[0],
+                    display_text="Other doc.",
+                    embed_text="[Lecture, 00:00:00-00:00:01]\nOther doc.",
+                ),
+            ],
+            embedder,
+            store_dir,
+        )
+
+        result = runner.invoke(cli.app, ["rm", doc_id])
+
+        assert result.exit_code == 0, result.output
+        rows = read_chunks(store_dir)
+        assert [row["doc_id"] for row in rows] == [other_doc_id]
+
     def test_unknown_doc_id_fails(self, tmp_path, monkeypatch):
         monkeypatch.setattr(cli, "OUTPUT_DIR", tmp_path)
+        monkeypatch.setattr(cli, "STORE_DIR", tmp_path / "store")
 
         result = runner.invoke(cli.app, ["rm", "0000000000000099"])
 
         assert result.exit_code != 0
+
+
+class TestReindexCommand:
+    def test_rebuilds_store_from_jsonl_without_calling_asr_backend(self, tmp_path, monkeypatch):
+        output_dir = tmp_path / "output"
+        store_dir = tmp_path / "store"
+        monkeypatch.setattr(cli, "OUTPUT_DIR", output_dir)
+        monkeypatch.setattr(cli, "STORE_DIR", store_dir)
+        ingest_backend = FakeASRBackend([make_segment()])
+        cli.ingest_file(
+            SAMPLE_A,
+            backend=ingest_backend,
+            language="pl",
+            output_dir=output_dir,
+            doc_type=TranscriptType.OTHER,
+            title="Lecture 1",
+            course=None,
+            date=None,
+            speakers=[],
+            tags=[],
+            render_targets=[],
+            asr_model_name="fake",
+        )
+        embedder = FakeEmbedder(dim=8)
+        monkeypatch.setattr(cli, "load_config", lambda: FAKE_CONFIG)
+        monkeypatch.setattr(cli, "build_embedder", lambda config: embedder)
+
+        def _fail_if_called(*args, **kwargs):
+            raise AssertionError("reindex must not build an ASR backend")
+
+        monkeypatch.setattr(cli, "build_asr_backend", _fail_if_called)
+
+        result = runner.invoke(cli.app, ["reindex"])
+
+        assert result.exit_code == 0, result.output
+        assert "reindexed 1 document" in result.output
+        assert len(ingest_backend.calls) == 1  # only the setup ingest, not a re-transcription
+        rows = read_chunks(store_dir)
+        assert len(rows) == 1
+        assert collection_metadata(store_dir) == (embedder.name, embedder.dim)
+
+    def test_replaces_a_stale_index_built_with_a_different_embedder(self, tmp_path, monkeypatch):
+        output_dir = tmp_path / "output"
+        store_dir = tmp_path / "store"
+        monkeypatch.setattr(cli, "OUTPUT_DIR", output_dir)
+        monkeypatch.setattr(cli, "STORE_DIR", store_dir)
+        backend = FakeASRBackend([make_segment()])
+        result_path = cli.ingest_file(
+            SAMPLE_A,
+            backend=backend,
+            language="pl",
+            output_dir=output_dir,
+            doc_type=TranscriptType.OTHER,
+            title="Lecture 1",
+            course=None,
+            date=None,
+            speakers=[],
+            tags=[],
+            render_targets=[],
+            asr_model_name="fake",
+        )
+        doc_id = result_path.stem.removesuffix(".segments")
+        stale_embedder = FakeEmbedder(dim=16)
+        write_chunks(
+            [
+                Chunk(
+                    doc_id=doc_id,
+                    chunk_id=0,
+                    start=0.0,
+                    end=1.5,
+                    segment_ids=[0],
+                    display_text="stale",
+                    embed_text="[Lecture 1, 00:00:00-00:00:01]\nstale",
+                )
+            ],
+            stale_embedder,
+            store_dir,
+        )
+        new_embedder = FakeEmbedder(dim=8)
+        monkeypatch.setattr(cli, "load_config", lambda: FAKE_CONFIG)
+        monkeypatch.setattr(cli, "build_embedder", lambda config: new_embedder)
+
+        result = runner.invoke(cli.app, ["reindex"])
+
+        assert result.exit_code == 0, result.output
+        assert collection_metadata(store_dir) == (new_embedder.name, 8)
 
 
 class TestRelabelCommand:

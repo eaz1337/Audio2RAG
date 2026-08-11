@@ -17,15 +17,18 @@ from load.manage import list_transcripts, relabel_speakers, remove_transcript
 from load.render_md import render_md_from_jsonl
 from load.render_pdf import render_pdf_from_jsonl
 from load.render_srt import render_srt_from_jsonl
+from load.vector_store import delete_doc, reindex_all
 from load.write_canonical import meta_path, segments_path, write_canonical
 from models.schemas import Segment, TranscriptMeta, TranscriptType
 from transform.asr.base import ASRBackend
+from transform.embed import Embedder
 from transform.transcribe import Transcriber
 
 app = typer.Typer()
 
 CONFIG_PATH = Path("config.yaml")
 OUTPUT_DIR = Path("output")
+STORE_DIR = Path("store")
 
 _RENDERERS = {
     "pdf": render_pdf_from_jsonl,
@@ -58,6 +61,12 @@ def build_asr_backend(config: dict[str, Any], *, diarize: bool = False) -> ASRBa
             diarize=diarize or whisper_config.get("diarize", False),
         )
     raise ValueError(f"ASR backend {backend_name!r} is not implemented yet")
+
+
+def build_embedder(config: dict[str, Any]) -> Embedder:
+    from transform.embed import BgeM3Embedder
+
+    return BgeM3Embedder(model_name=config["embedding"]["model"])
 
 
 def _parse_render_targets(render: str, default: list[str]) -> list[str]:
@@ -226,12 +235,32 @@ def list_command() -> None:
 
 @app.command()
 def rm(doc_id: str = typer.Argument(...)) -> None:
-    """Removes every canonical and rendered artifact for `doc_id`. Does not touch a vector
-    store — that cleanup path lands in INDEX-3."""
+    """Removes every canonical and rendered artifact for `doc_id`, plus its chunks from
+    the vector store."""
     if not meta_path(doc_id, OUTPUT_DIR).exists():
         typer.echo(f"no transcript with doc_id {doc_id!r}", err=True)
         raise typer.Exit(code=1)
     remove_transcript(doc_id, OUTPUT_DIR)
+    delete_doc(STORE_DIR, doc_id)
+
+
+@app.command()
+def reindex() -> None:
+    """Rebuilds the vector store from `output/*.segments.jsonl` for every ingested
+    document, without re-transcribing. Run after an embedding-model or chunking-config
+    change — `EmbeddingModelMismatch` at query time points here."""
+    config = load_config()
+    embedder = build_embedder(config)
+    chunking = config["chunking"]
+    doc_ids = reindex_all(
+        OUTPUT_DIR,
+        STORE_DIR,
+        embedder,
+        target_tokens=chunking["target_tokens"],
+        overlap_ratio=chunking["overlap_ratio"],
+        pause_threshold_s=chunking["pause_threshold_s"],
+    )
+    typer.echo(f"reindexed {len(doc_ids)} document(s)")
 
 
 def _parse_speaker_labels(pairs: list[str]) -> dict[str, str]:
