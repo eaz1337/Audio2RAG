@@ -181,7 +181,7 @@ completes without labels, sets `diarized: false` and logs a warning — it does 
 
 ## Phase 4 — `[STANDARD]` CHUNK: chunking
 
-### [ ] CHUNK-1 — Chunk schema and chunker
+### [x] CHUNK-1 — Chunk schema and chunker
 **Why:** highest-leverage task in the plan — chunk quality caps everything downstream. Pure function
 over data, no models needed, so be strict here.
 **Touch:** `src/models/schemas.py` (`Chunk`), `src/transform/chunk.py`, tests
@@ -191,7 +191,7 @@ chunk carries `start`, `end`, `doc_id`, `segment_ids`. Tests cover: a single sho
 monologue, rapid speaker alternation, and a segment longer than the target size.
 **Out of scope:** embedding.
 
-### [ ] CHUNK-2 — Contextual header
+### [x] CHUNK-2 — Contextual header
 **Touch:** `src/transform/chunk.py`, tests
 **Done when:** `Chunk.embed_text` is the header (`[title, date, speaker, HH:MM:SS–HH:MM:SS]`, the
 spec §7 citation format) plus the body, while `Chunk.display_text` stays clean for citation display.

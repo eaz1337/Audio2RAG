@@ -52,6 +52,50 @@ class Segment(BaseModel):
         return self
 
 
+class Chunk(BaseModel):
+    """One retrieval unit assembled from consecutive segments (spec.md §3).
+
+    `display_text` is the clean chunk body shown in citations; `embed_text` is what
+    actually gets embedded — the contextual header (`[title, date, speaker,
+    HH:MM:SS–HH:MM:SS]`, spec.md §7) followed by the body.
+    """
+
+    doc_id: str
+    chunk_id: int = Field(ge=0)
+    start: float
+    end: float
+    segment_ids: list[int]
+    display_text: str
+    embed_text: str
+
+    @field_validator("doc_id")
+    @classmethod
+    def _doc_id_format(cls, v: str) -> str:
+        if not _DOC_ID_RE.match(v):
+            raise ValueError("doc_id must be 16 lowercase hex characters (sha256(bytes)[:16])")
+        return v
+
+    @field_validator("segment_ids")
+    @classmethod
+    def _segment_ids_non_empty(cls, v: list[int]) -> list[int]:
+        if not v:
+            raise ValueError("segment_ids must not be empty")
+        return v
+
+    @field_validator("display_text", "embed_text")
+    @classmethod
+    def _text_non_empty(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("text must not be empty")
+        return v
+
+    @model_validator(mode="after")
+    def _end_after_start(self) -> Chunk:
+        if self.end <= self.start:
+            raise ValueError("end must be greater than start")
+        return self
+
+
 class TranscriptMeta(BaseModel):
     """`output/<doc_id>.meta.json` sidecar (spec.md §2)."""
 
