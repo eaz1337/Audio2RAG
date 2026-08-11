@@ -66,6 +66,7 @@ class TranscriptMeta(BaseModel):
     duration_s: float
     language: str
     model: str
+    diarized: bool = False
     tags: list[str] = Field(default_factory=list)
     ingested_at: datetime
 

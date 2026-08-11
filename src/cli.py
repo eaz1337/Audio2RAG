@@ -13,10 +13,11 @@ import yaml
 
 from extract.discover import discover_audio_files
 from extract.hashing import compute_sha256
+from load.manage import list_transcripts, relabel_speakers, remove_transcript
 from load.render_md import render_md_from_jsonl
 from load.render_pdf import render_pdf_from_jsonl
 from load.render_srt import render_srt_from_jsonl
-from load.write_canonical import segments_path, write_canonical
+from load.write_canonical import meta_path, segments_path, write_canonical
 from models.schemas import Segment, TranscriptMeta, TranscriptType
 from transform.asr.base import ASRBackend
 from transform.transcribe import Transcriber
@@ -37,12 +38,25 @@ def load_config(config_path: Path = CONFIG_PATH) -> dict[str, Any]:
     return yaml.safe_load(config_path.read_text())
 
 
-def build_asr_backend(config: dict[str, Any]) -> ASRBackend:
+def build_asr_backend(config: dict[str, Any], *, diarize: bool = False) -> ASRBackend:
     backend_name = config["asr"]["backend"]
     if backend_name == "assemblyai":
         from transform.asr.hosted import AssemblyAIBackend
 
         return AssemblyAIBackend()
+    if backend_name == "whisper-local":
+        from transform.asr.whisper_local import WhisperLocalBackend
+
+        whisper_config = config["asr"]["whisper_local"]
+        return WhisperLocalBackend(
+            model=whisper_config["model"],
+            vad_filter=whisper_config["vad_filter"],
+            word_timestamps=whisper_config["word_timestamps"],
+            condition_on_previous_text_max_minutes=whisper_config[
+                "condition_on_previous_text_max_minutes"
+            ],
+            diarize=diarize or whisper_config.get("diarize", False),
+        )
     raise ValueError(f"ASR backend {backend_name!r} is not implemented yet")
 
 
@@ -102,6 +116,7 @@ def ingest_file(
         duration_s=max((segment.end for segment in segments), default=0.0),
         language=language,
         model=asr_model_name,
+        diarized=any(segment.speaker for segment in segments),
         tags=tags,
         ingested_at=datetime.now(UTC),
     )
@@ -152,6 +167,11 @@ def ingest(
     tag: list[str] = typer.Option([], "--tag"),
     render: str = typer.Option("", "--render"),
     force: bool = typer.Option(False, "--force"),
+    diarize: bool = typer.Option(
+        False,
+        "--diarize",
+        help="Diarize with pyannote (whisper-local only; hosted backends diarize inline).",
+    ),
 ) -> None:
     """Transcribes `path` (or reuses the cached transcript) and writes the canonical
     artifacts plus any `--render` targets. Values from the metadata flags land in
@@ -159,7 +179,7 @@ def ingest(
     file in it is ingested (`--recursive` to descend into subdirectories); an unsupported
     file is skipped with a warning and a single file's failure does not abort the batch."""
     config = load_config()
-    backend = build_asr_backend(config)
+    backend = build_asr_backend(config, diarize=diarize)
     render_targets = _parse_render_targets(render, config["ingest"]["render_default"])
 
     common_kwargs: dict[str, Any] = dict(
@@ -187,6 +207,56 @@ def ingest(
         return
 
     ingest_file(path, **common_kwargs)
+
+
+def _format_duration(duration_s: float) -> str:
+    minutes, seconds = divmod(int(duration_s), 60)
+    return f"{minutes}m{seconds:02d}s"
+
+
+@app.command(name="list")
+def list_command() -> None:
+    """Prints doc_id, title, type, and duration for every ingested transcript."""
+    metas = list_transcripts(OUTPUT_DIR)
+    for meta in metas:
+        typer.echo(
+            f"{meta.doc_id}\t{meta.title}\t{meta.type.value}\t{_format_duration(meta.duration_s)}"
+        )
+
+
+@app.command()
+def rm(doc_id: str = typer.Argument(...)) -> None:
+    """Removes every canonical and rendered artifact for `doc_id`. Does not touch a vector
+    store — that cleanup path lands in INDEX-3."""
+    if not meta_path(doc_id, OUTPUT_DIR).exists():
+        typer.echo(f"no transcript with doc_id {doc_id!r}", err=True)
+        raise typer.Exit(code=1)
+    remove_transcript(doc_id, OUTPUT_DIR)
+
+
+def _parse_speaker_labels(pairs: list[str]) -> dict[str, str]:
+    labels: dict[str, str] = {}
+    for pair in pairs:
+        if "=" not in pair:
+            raise typer.BadParameter(f"expected LABEL=NAME, got {pair!r}")
+        label, name = pair.split("=", 1)
+        labels[label.strip()] = name.strip()
+    return labels
+
+
+@app.command()
+def relabel(
+    doc_id: str = typer.Argument(...),
+    speaker: list[str] = typer.Option(
+        [], "--speaker", help="LABEL=NAME, e.g. --speaker SPEAKER_00='Dr. Kowalski'"
+    ),
+) -> None:
+    """Edits `<doc_id>.meta.json`'s speaker labels only; never re-runs transcription."""
+    if not meta_path(doc_id, OUTPUT_DIR).exists():
+        typer.echo(f"no transcript with doc_id {doc_id!r}", err=True)
+        raise typer.Exit(code=1)
+    labels = _parse_speaker_labels(speaker)
+    relabel_speakers(doc_id, OUTPUT_DIR, labels)
 
 
 if __name__ == "__main__":

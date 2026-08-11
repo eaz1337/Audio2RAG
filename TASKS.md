@@ -152,14 +152,14 @@ works, values land in `meta.json`, `type` is validated against the enum
 with a warning, and continues past a single file's failure instead of aborting the batch.
 **Out of scope:** parallelism.
 
-### [ ] INGEST-4 — `list`, `rm`, `relabel`
+### [x] INGEST-4 — `list`, `rm`, `relabel`
 **Touch:** CLI, `src/load/`, tests
 **Done when:** `list` prints doc_id/title/type/duration from meta files; `rm <doc_id>` removes all
 artifacts for that id; `relabel <doc_id> --speaker ...` edits `meta.json` only and never re-runs
 transcription.
 **Out of scope:** vector store cleanup in `rm` — added in INDEX-3.
 
-### [ ] INGEST-5 — `whisper-local` fallback backend
+### [x] INGEST-5 — `whisper-local` fallback backend
 **Touch:** `src/transform/asr/whisper_local.py`, `pyproject.toml` (`[cuda]` extra), tests
 **Done when:** implements `ASRBackend` with `vad_filter=True`, `word_timestamps=True` and
 `condition_on_previous_text=False` for inputs over 30 minutes, selectable via
@@ -167,7 +167,7 @@ transcription.
 without CUDA. Never imported unless selected (lazy import).
 **Out of scope:** diarization — that's INGEST-6.
 
-### [ ] INGEST-6 — Diarization for the local fallback
+### [x] INGEST-6 — Diarization for the local fallback
 **Why:** the hosted default already returns speaker labels; this only matters for `whisper-local`.
 **Touch:** `src/transform/diarize.py` (pyannote wrapper — the file CLAUDE.md's layout reserves for
 this), a hook in `src/transform/asr/whisper_local.py`, `pyproject.toml` (`[diarize]` extra), tests
