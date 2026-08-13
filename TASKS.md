@@ -235,13 +235,13 @@ index without re-ingesting.
 
 ## Phase 6 — SEARCH: retrieval (`[STANDARD]` dense+filters, `[ADVANCED]` hybrid+rerank+expansion)
 
-### [ ] SEARCH-1 — `[STANDARD]` Dense search
+### [x] SEARCH-1 — `[STANDARD]` Dense search
 **Touch:** `src/retrieve/search.py`, tests with `FakeEmbedder` and a toy corpus
 **Done when:** `dense_search(query, k)` returns an ordered `list[RetrievalHit]` with scores. This
 alone is the Standard deliverable: smart search, no LLM call.
 **Out of scope:** fusion, reranking, LLM.
 
-### [ ] SEARCH-2 — `[ADVANCED]` BM25 index and search
+### [x] SEARCH-2 — `[ADVANCED]` BM25 index and search
 **Touch:** `src/load/bm25_index.py`, `src/retrieve/search.py`, tests
 **Done when:** a `bm25s` index is built at `store/bm25/` during ingest **and** during `reindex`
 (INDEX-4), deleted alongside vectors in INDEX-3's path, and `sparse_search(query, k)` returns

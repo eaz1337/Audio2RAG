@@ -10,6 +10,7 @@ from pathlib import Path
 import lancedb
 import pyarrow as pa
 
+from load import bm25_index
 from load.manage import list_transcripts
 from load.write_canonical import read_segments
 from models.schemas import Chunk
@@ -70,7 +71,8 @@ def write_chunks(chunks: list[Chunk], embedder: Embedder, store_dir: Path) -> No
     """Embeds `chunk.embed_text` for every chunk and replaces the rows for every doc_id
     present in `chunks` (CLAUDE.md "Idempotency": DELETE WHERE doc_id then INSERT, never
     per-chunk upsert), so re-ingesting the same file — or the same file after a chunk-size
-    config change — leaves no orphaned rows."""
+    config change — leaves no orphaned rows. Keeps the BM25 sparse index (SEARCH-2) in
+    sync with the same doc_ids."""
     if not chunks:
         return
 
@@ -86,22 +88,32 @@ def write_chunks(chunks: list[Chunk], embedder: Embedder, store_dir: Path) -> No
     else:
         db.create_table(_TABLE_NAME, data=data)
 
+    bm25_index.write_chunks(chunks, store_dir)
+
 
 def delete_doc(store_dir: Path, doc_id: str) -> None:
-    """Removes every row for `doc_id`, e.g. for the `rm` command. A no-op if the table
-    does not exist yet."""
+    """Removes every row for `doc_id`, e.g. for the `rm` command, from both the dense
+    table and the BM25 index (SEARCH-2). A no-op if the table does not exist yet."""
+    db = lancedb.connect(lance_dir(store_dir))
+    if _table_exists(db):
+        db.open_table(_TABLE_NAME).delete(f"doc_id = '{doc_id}'")
+    bm25_index.delete_doc(store_dir, doc_id)
+
+
+def open_table(store_dir: Path) -> lancedb.table.Table | None:
+    """The `chunks` table, or `None` if it does not exist yet — the handle `retrieve/search.py`
+    runs vector queries against."""
     db = lancedb.connect(lance_dir(store_dir))
     if not _table_exists(db):
-        return
-    db.open_table(_TABLE_NAME).delete(f"doc_id = '{doc_id}'")
+        return None
+    return db.open_table(_TABLE_NAME)
 
 
 def read_chunks(store_dir: Path, doc_id: str | None = None) -> list[dict[str, object]]:
     """Every row in the `chunks` table, optionally restricted to one `doc_id`."""
-    db = lancedb.connect(lance_dir(store_dir))
-    if not _table_exists(db):
+    table = open_table(store_dir)
+    if table is None:
         return []
-    table = db.open_table(_TABLE_NAME)
     query = table.search()
     if doc_id is not None:
         query = query.where(f"doc_id = '{doc_id}'")
@@ -143,13 +155,15 @@ def assert_embedder_matches(store_dir: Path, embedder: Embedder) -> None:
 
 
 def drop_table(store_dir: Path) -> None:
-    """Drops the `chunks` table entirely. LanceDB tables have a fixed vector width, so a
-    `reindex` with a different embedding dimension needs a fresh table rather than the
-    per-doc-id delete-then-insert `write_chunks` does. A no-op if the table does not exist
-    yet."""
+    """Drops the `chunks` table and the BM25 index entirely. LanceDB tables have a fixed
+    vector width, so a `reindex` with a different embedding dimension needs a fresh table
+    rather than the per-doc-id delete-then-insert `write_chunks` does; the BM25 index is
+    dropped alongside it so `reindex_all`'s rebuild starts from nothing in both. A no-op if
+    neither exists yet."""
     db = lancedb.connect(lance_dir(store_dir))
     if _table_exists(db):
         db.drop_table(_TABLE_NAME)
+    bm25_index.drop_index(store_dir)
 
 
 def reindex_all(

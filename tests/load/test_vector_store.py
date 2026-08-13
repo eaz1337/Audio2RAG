@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 import pytest
 from fakes import FakeEmbedder
 
+from load.bm25_index import bm25_dir, read_rows as read_bm25_rows
 from load.vector_store import (
     EmbeddingModelMismatch,
     assert_embedder_matches,
@@ -277,3 +278,34 @@ class TestReindexAll:
 
         assert doc_ids == []
         assert collection_metadata(store_dir) is None
+
+    def test_rebuilds_the_bm25_index_alongside_the_dense_one(self, tmp_path):
+        output_dir = tmp_path / "output"
+        store_dir = tmp_path / "store"
+        write_transcript(output_dir, DOC_ID)
+        write_transcript(output_dir, OTHER_DOC_ID)
+
+        reindex_all(output_dir, store_dir, FakeEmbedder(dim=8))
+
+        assert {row["doc_id"] for row in read_bm25_rows(store_dir)} == {DOC_ID, OTHER_DOC_ID}
+
+
+class TestBm25Wiring:
+    """`write_chunks`/`delete_doc`/reindex keep the BM25 sparse index (SEARCH-2) in sync
+    with the dense one — verified here at the `vector_store` entry points rather than in
+    `test_bm25_index.py`, which covers `bm25_index` in isolation."""
+
+    def test_write_chunks_also_writes_the_bm25_index(self, tmp_path):
+        write_chunks([make_chunk()], FakeEmbedder(dim=8), tmp_path)
+
+        assert bm25_dir(tmp_path).exists()
+        assert [row["doc_id"] for row in read_bm25_rows(tmp_path)] == [DOC_ID]
+
+    def test_delete_doc_also_removes_bm25_rows_for_that_doc(self, tmp_path):
+        write_chunks([make_chunk(chunk_id=0)], FakeEmbedder(dim=8), tmp_path)
+        write_chunks([make_chunk(doc_id=OTHER_DOC_ID, chunk_id=0)], FakeEmbedder(dim=8), tmp_path)
+
+        delete_doc(tmp_path, DOC_ID)
+
+        rows = read_bm25_rows(tmp_path)
+        assert [row["doc_id"] for row in rows] == [OTHER_DOC_ID]

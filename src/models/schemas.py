@@ -96,6 +96,47 @@ class Chunk(BaseModel):
         return self
 
 
+class RetrievalHit(BaseModel):
+    """One ranked result from `retrieve/search.py` (spec.md §6, TASKS.md SEARCH-1) — enough
+    for a client to display the chunk and jump to its timestamp. `score` is similarity,
+    highest first; a threshold on it is what backs the §7 refusal-over-hallucination guarantee."""
+
+    doc_id: str
+    chunk_id: int = Field(ge=0)
+    score: float
+    start: float
+    end: float
+    segment_ids: list[int]
+    display_text: str
+
+    @field_validator("doc_id")
+    @classmethod
+    def _doc_id_format(cls, v: str) -> str:
+        if not _DOC_ID_RE.match(v):
+            raise ValueError("doc_id must be 16 lowercase hex characters (sha256(bytes)[:16])")
+        return v
+
+    @field_validator("segment_ids")
+    @classmethod
+    def _segment_ids_non_empty(cls, v: list[int]) -> list[int]:
+        if not v:
+            raise ValueError("segment_ids must not be empty")
+        return v
+
+    @field_validator("display_text")
+    @classmethod
+    def _text_non_empty(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("text must not be empty")
+        return v
+
+    @model_validator(mode="after")
+    def _end_after_start(self) -> RetrievalHit:
+        if self.end <= self.start:
+            raise ValueError("end must be greater than start")
+        return self
+
+
 class TranscriptMeta(BaseModel):
     """`output/<doc_id>.meta.json` sidecar (spec.md §2)."""
 
