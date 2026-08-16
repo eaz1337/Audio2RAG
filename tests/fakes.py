@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 from numpy.typing import NDArray
 
-from models.schemas import Segment
+from models.schemas import RetrievalHit, Segment
 
 
 class FakeASRBackend:
@@ -39,3 +39,13 @@ class FakeEmbedder:
             seed = int(hashlib.sha256(text.encode("utf-8")).hexdigest(), 16) % (2**32)
             vectors[i] = np.random.default_rng(seed).standard_normal(self.dim)
         return vectors
+
+
+class FakeReranker:
+    """Deterministic stand-in for a cross-encoder reranker: reverses input order, so tests
+    can assert reranking actually ran instead of the input happening to already be sorted."""
+
+    name = "fake-reranker"
+
+    def rerank(self, query: str, hits: list[RetrievalHit]) -> list[RetrievalHit]:
+        return list(reversed(hits))

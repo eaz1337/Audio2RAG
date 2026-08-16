@@ -248,13 +248,13 @@ alone is the Standard deliverable: smart search, no LLM call.
 comparable hits. A test shows BM25 finding an exact rare term the fake dense path misses.
 **Out of scope:** fusion.
 
-### [ ] SEARCH-3 — `[ADVANCED]` RRF fusion
+### [x] SEARCH-3 — `[ADVANCED]` RRF fusion
 **Touch:** `src/retrieve/fusion.py`, tests
 **Done when:** `rrf(dense_hits, sparse_hits, k=60)` is a pure function with hand-computed expected
 rankings in the tests, including disjoint result sets and full overlap.
 **Out of scope:** reranking.
 
-### [ ] SEARCH-4 — `[ADVANCED]` Reranker behind a protocol
+### [x] SEARCH-4 — `[ADVANCED]` Reranker behind a protocol
 **Touch:** `src/retrieve/rerank.py`, `tests/fakes.py`
 **Done when:** a `Reranker` Protocol plus `FakeReranker` (deterministic, e.g. reverses order) make
 the wiring testable; the real `bge-reranker-v2-m3` sits behind the `[rag]` extra, marked `slow`.
