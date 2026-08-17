@@ -1,9 +1,10 @@
+import json
 from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
 
-from fakes import FakeASRBackend, FakeEmbedder
+from fakes import FakeASRBackend, FakeEmbedder, FakeLLM
 
 import cli
 from extract.hashing import compute_sha256
@@ -36,6 +37,8 @@ FAKE_CONFIG = {
     "ingest": {"render_default": []},
     "embedding": {"model": "fake-embedder"},
     "chunking": {"target_tokens": 500, "overlap_ratio": 0.15, "pause_threshold_s": 1.5},
+    "retrieval": {"dense_top_k": 30},
+    "answer": {"refusal_threshold": 0.35, "llm": "fake"},
 }
 
 
@@ -988,3 +991,123 @@ class TestSearchCommand:
         assert result.exit_code == 0, result.output
         assert "OS Lecture" in result.output
         assert "DB Lecture" in result.output
+
+
+class TestAskCommand:
+    QUERY = "deadlock"
+
+    def _ingest_and_index(self, tmp_path, monkeypatch, embedder):
+        """Ingests one file (for its meta: title, source path) and writes a single chunk
+        whose `embed_text` equals `QUERY`, so `FakeEmbedder`'s hash-derived vector matches
+        the query exactly and the top score clears any realistic threshold."""
+        output_dir = tmp_path / "output"
+        store_dir = tmp_path / "store"
+        monkeypatch.setattr(cli, "OUTPUT_DIR", output_dir)
+        monkeypatch.setattr(cli, "STORE_DIR", store_dir)
+
+        cli.ingest_file(
+            SAMPLE_A,
+            backend=FakeASRBackend([make_segment(doc_id=compute_sha256(SAMPLE_A)[:16])]),
+            language="pl",
+            output_dir=output_dir,
+            doc_type=TranscriptType.LECTURE,
+            title="OS Lecture",
+            course="Operating Systems",
+            date=None,
+            speakers=[],
+            tags=[],
+            render_targets=[],
+            asr_model_name="fake",
+        )
+        doc_id = compute_sha256(SAMPLE_A)[:16]
+        write_chunks(
+            [
+                Chunk(
+                    doc_id=doc_id,
+                    chunk_id=0,
+                    start=12.0,
+                    end=16.2,
+                    segment_ids=[0],
+                    display_text="Deadlock occurs when all four Coffman conditions hold.",
+                    embed_text=self.QUERY,
+                )
+            ],
+            embedder,
+            store_dir,
+        )
+        return output_dir, store_dir
+
+    def test_prints_answer_with_citation_and_source_path(self, tmp_path, monkeypatch):
+        embedder = FakeEmbedder(dim=8)
+        llm = FakeLLM(response="Deadlock needs all four Coffman conditions.")
+        self._ingest_and_index(tmp_path, monkeypatch, embedder)
+        monkeypatch.setattr(cli, "load_config", lambda: FAKE_CONFIG)
+        monkeypatch.setattr(cli, "build_embedder", lambda config: embedder)
+        monkeypatch.setattr(cli, "build_llm", lambda config: llm)
+
+        result = runner.invoke(cli.app, ["ask", self.QUERY])
+
+        assert result.exit_code == 0, result.output
+        assert "Deadlock needs all four Coffman conditions." in result.output
+        assert "OS Lecture" in result.output
+        assert str(SAMPLE_A) in result.output
+
+    def test_refuses_below_threshold_without_calling_llm(self, tmp_path, monkeypatch):
+        embedder = FakeEmbedder(dim=8)
+        llm = FakeLLM(response="should never be seen")
+        self._ingest_and_index(tmp_path, monkeypatch, embedder)
+        config = dict(FAKE_CONFIG, answer={"refusal_threshold": 2.0, "llm": "fake"})
+        monkeypatch.setattr(cli, "load_config", lambda: config)
+        monkeypatch.setattr(cli, "build_embedder", lambda config: embedder)
+        monkeypatch.setattr(cli, "build_llm", lambda config: llm)
+
+        result = runner.invoke(cli.app, ["ask", self.QUERY])
+
+        assert result.exit_code == 0, result.output
+        assert "No answer found" in result.output
+        assert llm.calls == []
+
+    def test_course_filter_excludes_a_non_matching_course(self, tmp_path, monkeypatch):
+        embedder = FakeEmbedder(dim=8)
+        llm = FakeLLM(response="should never be seen")
+        self._ingest_and_index(tmp_path, monkeypatch, embedder)
+        monkeypatch.setattr(cli, "load_config", lambda: FAKE_CONFIG)
+        monkeypatch.setattr(cli, "build_embedder", lambda config: embedder)
+        monkeypatch.setattr(cli, "build_llm", lambda config: llm)
+
+        result = runner.invoke(cli.app, ["ask", self.QUERY, "--course", "Databases"])
+
+        assert result.exit_code == 0, result.output
+        assert "No answer found" in result.output
+        assert llm.calls == []
+
+    def test_json_flag_emits_the_answer_model(self, tmp_path, monkeypatch):
+        embedder = FakeEmbedder(dim=8)
+        llm = FakeLLM(response="Deadlock needs all four Coffman conditions.")
+        self._ingest_and_index(tmp_path, monkeypatch, embedder)
+        monkeypatch.setattr(cli, "load_config", lambda: FAKE_CONFIG)
+        monkeypatch.setattr(cli, "build_embedder", lambda config: embedder)
+        monkeypatch.setattr(cli, "build_llm", lambda config: llm)
+
+        result = runner.invoke(cli.app, ["ask", self.QUERY, "--json"])
+
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.output)
+        assert payload["text"] == "Deadlock needs all four Coffman conditions."
+        assert payload["citations"][0]["title"] == "OS Lecture"
+
+    def test_json_flag_emits_the_refusal_model(self, tmp_path, monkeypatch):
+        embedder = FakeEmbedder(dim=8)
+        llm = FakeLLM(response="should never be seen")
+        self._ingest_and_index(tmp_path, monkeypatch, embedder)
+        config = dict(FAKE_CONFIG, answer={"refusal_threshold": 2.0, "llm": "fake"})
+        monkeypatch.setattr(cli, "load_config", lambda: config)
+        monkeypatch.setattr(cli, "build_embedder", lambda config: embedder)
+        monkeypatch.setattr(cli, "build_llm", lambda config: llm)
+
+        result = runner.invoke(cli.app, ["ask", self.QUERY, "--json"])
+
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.output)
+        assert payload["query"] == self.QUERY
+        assert llm.calls == []

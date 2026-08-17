@@ -287,14 +287,14 @@ client.
 **Depends only on** SEARCH-1 and SEARCH-5. Run it before SEARCH-2/3/4/6 to get a working `ask`
 sooner.
 
-### [ ] SMOKE-1 — Answer and Citation schemas
+### [x] SMOKE-1 — Answer and Citation schemas
 **Why:** encoding "no answer without a source" in the type system is more reliable than prompting.
 **Touch:** `src/models/schemas.py`, tests
 **Done when:** `Citation` (doc_id, title, start, end) and `Answer` with a non-empty citations list;
 `Refusal` is a separate type. Constructing an `Answer` with zero citations raises.
 **Out of scope:** the LLM call.
 
-### [ ] SMOKE-2 — Prompts module and LLM protocol
+### [x] SMOKE-2 — Prompts module and LLM protocol
 **Touch:** `src/retrieve/prompts.py`, `src/retrieve/llm.py`, `tests/fakes.py`
 **Done when:** all prompt strings live in `prompts.py`, are versioned and unit-tested for refusal
 behaviour; an `LLMClient` Protocol plus `FakeLLM` allow full answer-path tests with no model. No
@@ -302,14 +302,14 @@ inline prompt strings elsewhere.
 **Out of scope:** choosing the production LLM — pick something that runs today to unblock this
 phase. The real choice (spec.md "Open decisions" #1) is revisited once EVAL-1 gives data.
 
-### [ ] SMOKE-3 — Naive threshold and refusal path, dense-only
+### [x] SMOKE-3 — Naive threshold and refusal path, dense-only
 **Touch:** `src/retrieve/answer.py`, tests
 **Done when:** given only `dense_search` results, a top score below the configured threshold returns
 `Refusal` without calling the LLM (assert `FakeLLM` was not invoked). The threshold is a throwaway
 starting guess — it exists so the refusal *mechanism* is real from day one.
 **Out of scope:** tuning the threshold — EVAL-2.
 
-### [ ] SMOKE-4 — `ask` command, dense-only
+### [x] SMOKE-4 — `ask` command, dense-only
 **Touch:** `src/cli.py`, tests
 **Done when:** `audio2rag ask "..." [filters]` works end to end against a fixture store, printing an
 answer or a refusal with `[title, HH:MM:SS]` citations and the source audio path. `--json` emits the

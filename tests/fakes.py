@@ -41,6 +41,22 @@ class FakeEmbedder:
         return vectors
 
 
+class FakeLLM:
+    """Fixed, injectable completion instead of a real model call (CLAUDE.md
+    "Testing": no non-slow test touches the network). `calls` lets SMOKE-3's tests
+    assert the LLM was never invoked on the below-threshold refusal path."""
+
+    name = "fake-llm"
+
+    def __init__(self, response: str = "answer") -> None:
+        self._response = response
+        self.calls: list[tuple[str, str]] = []
+
+    def complete(self, system: str, user: str) -> str:
+        self.calls.append((system, user))
+        return self._response
+
+
 class FakeReranker:
     """Deterministic stand-in for a cross-encoder reranker: reverses input order, so tests
     can assert reranking actually ran instead of the input happening to already be sorted."""

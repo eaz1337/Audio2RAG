@@ -45,4 +45,8 @@ retrieval:                     # [STANDARD dense-only -> ADVANCED hybrid] spec.m
 
 answer:                        # [ADVANCED] spec.md §7
   refusal_threshold: 0.35      # placeholder seed value — tuned against eval/ in EVAL-2
-  llm: null                    # open decision, see spec.md "Open decisions" #1
+  llm: ollama                  # placeholder to unblock SMOKE; real choice is still open,
+                                # see spec.md "Open decisions" #1 and TASKS.md SMOKE-2
+  ollama:
+    model: bielik-11b-v2.3-instruct
+    base_url: http://localhost:11434

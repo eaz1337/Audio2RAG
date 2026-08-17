@@ -19,7 +19,9 @@ from load.render_pdf import render_pdf_from_jsonl
 from load.render_srt import render_srt_from_jsonl
 from load.vector_store import delete_doc, reindex_all
 from load.write_canonical import meta_path, segments_path, write_canonical
-from models.schemas import Segment, TranscriptMeta, TranscriptType
+from models.schemas import Refusal, Segment, TranscriptMeta, TranscriptType
+from retrieve.answer import answer_question
+from retrieve.llm import LLMClient
 from retrieve.search import dense_search, filter_doc_ids
 from transform.asr.base import ASRBackend
 from transform.embed import Embedder
@@ -68,6 +70,16 @@ def build_embedder(config: dict[str, Any]) -> Embedder:
     from transform.embed import BgeM3Embedder
 
     return BgeM3Embedder(model_name=config["embedding"]["model"])
+
+
+def build_llm(config: dict[str, Any]) -> LLMClient:
+    backend_name = config["answer"]["llm"]
+    if backend_name == "ollama":
+        from retrieve.llm import OllamaLLM
+
+        ollama_config = config["answer"]["ollama"]
+        return OllamaLLM(model=ollama_config["model"], base_url=ollama_config["base_url"])
+    raise ValueError(f"LLM backend {backend_name!r} is not implemented yet")
 
 
 def _parse_render_targets(render: str, default: list[str]) -> list[str]:
@@ -286,6 +298,65 @@ def search(
         title = titles.get(hit.doc_id, hit.doc_id)
         timestamp = f"{_format_timestamp(hit.start)}-{_format_timestamp(hit.end)}"
         typer.echo(f"[{title}, {timestamp}]\t{hit.score:.3f}\t{hit.display_text}")
+
+
+@app.command()
+def ask(
+    query: str = typer.Argument(...),
+    course: str | None = typer.Option(None, "--course"),
+    doc_type: TranscriptType | None = typer.Option(None, "--type"),
+    after: str | None = typer.Option(None, "--after"),
+    before: str | None = typer.Option(None, "--before"),
+    speaker: str | None = typer.Option(None, "--speaker"),
+    tag: str | None = typer.Option(None, "--tag"),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """[VALIDATION] Dense-only question answering (TASKS.md SMOKE-4). Runs `dense_search`,
+    refuses below `answer.refusal_threshold` without calling the LLM, and otherwise prints
+    the grounded answer with `[title, HH:MM:SS]` citations and the source audio path.
+    `--course/--type/--after/--before/--speaker/--tag` restrict the candidate set exactly
+    like `search`. `--json` emits the `Answer`/`Refusal` model instead. Superseded by
+    ANSWER-1's hybrid pipeline."""
+    config = load_config()
+    embedder = build_embedder(config)
+    llm = build_llm(config)
+    metas = list_transcripts(OUTPUT_DIR)
+    titles = {meta.doc_id: meta.title for meta in metas}
+    source_paths = {meta.doc_id: meta.source_path for meta in metas}
+    doc_ids = filter_doc_ids(
+        metas,
+        course=course,
+        type=doc_type,
+        after=date_.fromisoformat(after) if after else None,
+        before=date_.fromisoformat(before) if before else None,
+        speaker=speaker,
+        tag=tag,
+    )
+
+    result = answer_question(
+        query,
+        embedder,
+        STORE_DIR,
+        llm,
+        titles,
+        k=config["retrieval"]["dense_top_k"],
+        threshold=config["answer"]["refusal_threshold"],
+        doc_ids=doc_ids,
+    )
+
+    if json_output:
+        typer.echo(result.model_dump_json())
+        return
+
+    if isinstance(result, Refusal):
+        typer.echo(f"No answer found: {result.reason}")
+        return
+
+    typer.echo(result.text)
+    for citation in result.citations:
+        timestamp = _format_timestamp(citation.start)
+        source_path = source_paths.get(citation.doc_id, citation.doc_id)
+        typer.echo(f"[{citation.title}, {timestamp}]\t{source_path}")
 
 
 @app.command()

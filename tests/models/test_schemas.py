@@ -3,9 +3,29 @@ from datetime import date, datetime
 import pytest
 from pydantic import ValidationError
 
-from models.schemas import Segment, TranscriptMeta, TranscriptType
+from models.schemas import Answer, Citation, Refusal, Segment, TranscriptMeta, TranscriptType
 
 DOC_ID = "a3f9c1b2d4e6f801"
+
+
+def make_citation(**overrides):
+    fields = {
+        "doc_id": DOC_ID,
+        "title": "Operating Systems — Lecture 3",
+        "start": 862.0,
+        "end": 867.1,
+    }
+    fields.update(overrides)
+    return Citation(**fields)
+
+
+def make_answer(**overrides):
+    fields = {
+        "text": "Deadlock requires all four Coffman conditions to hold simultaneously.",
+        "citations": [make_citation()],
+    }
+    fields.update(overrides)
+    return Answer(**fields)
 
 
 def make_segment(**overrides):
@@ -104,3 +124,55 @@ class TestTranscriptMeta:
     def test_rejects_malformed_doc_id(self):
         with pytest.raises(ValidationError):
             make_meta(doc_id="short")
+
+
+class TestCitation:
+    def test_round_trip(self):
+        citation = make_citation()
+        restored = Citation.model_validate_json(citation.model_dump_json())
+        assert restored == citation
+
+    def test_rejects_end_not_after_start(self):
+        with pytest.raises(ValidationError):
+            make_citation(start=10.0, end=10.0)
+        with pytest.raises(ValidationError):
+            make_citation(start=10.0, end=5.0)
+
+    def test_rejects_empty_title(self):
+        with pytest.raises(ValidationError):
+            make_citation(title="")
+
+    def test_rejects_malformed_doc_id(self):
+        with pytest.raises(ValidationError):
+            make_citation(doc_id="not-hex!!")
+
+
+class TestAnswer:
+    def test_round_trip(self):
+        answer = make_answer()
+        restored = Answer.model_validate_json(answer.model_dump_json())
+        assert restored == answer
+
+    def test_rejects_empty_citations(self):
+        with pytest.raises(ValidationError):
+            make_answer(citations=[])
+
+    def test_rejects_empty_text(self):
+        with pytest.raises(ValidationError):
+            make_answer(text="")
+
+
+class TestRefusal:
+    def test_round_trip(self):
+        refusal = Refusal(query="What is the capital of France?")
+        restored = Refusal.model_validate_json(refusal.model_dump_json())
+        assert restored == refusal
+        assert restored.reason == "not present in the recordings"
+
+    def test_custom_reason(self):
+        refusal = Refusal(query="...", reason="score below threshold")
+        assert refusal.reason == "score below threshold"
+
+    def test_rejects_empty_query(self):
+        with pytest.raises(ValidationError):
+            Refusal(query="")

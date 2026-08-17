@@ -137,6 +137,72 @@ class RetrievalHit(BaseModel):
         return self
 
 
+class Citation(BaseModel):
+    """A single source reference backing an `Answer` (spec.md §7 `[title, HH:MM:SS]` format)."""
+
+    doc_id: str
+    title: str
+    start: float
+    end: float
+
+    @field_validator("doc_id")
+    @classmethod
+    def _doc_id_format(cls, v: str) -> str:
+        if not _DOC_ID_RE.match(v):
+            raise ValueError("doc_id must be 16 lowercase hex characters (sha256(bytes)[:16])")
+        return v
+
+    @field_validator("title")
+    @classmethod
+    def _title_non_empty(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("title must not be empty")
+        return v
+
+    @model_validator(mode="after")
+    def _end_after_start(self) -> Citation:
+        if self.end <= self.start:
+            raise ValueError("end must be greater than start")
+        return self
+
+
+class Answer(BaseModel):
+    """A grounded answer (spec.md §7) — citations are non-empty at the type level, so "no
+    supporting chunk" can never be represented as free text claiming knowledge (CLAUDE.md)."""
+
+    text: str
+    citations: list[Citation]
+
+    @field_validator("text")
+    @classmethod
+    def _text_non_empty(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("text must not be empty")
+        return v
+
+    @field_validator("citations")
+    @classmethod
+    def _citations_non_empty(cls, v: list[Citation]) -> list[Citation]:
+        if not v:
+            raise ValueError("citations must not be empty")
+        return v
+
+
+class Refusal(BaseModel):
+    """Explicit refusal (spec.md §7) returned instead of an `Answer` when retrieval finds
+    nothing above the score threshold — never free text improvising an answer."""
+
+    query: str
+    reason: str = "not present in the recordings"
+
+    @field_validator("query", "reason")
+    @classmethod
+    def _non_empty(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("must not be empty")
+        return v
+
+
 class TranscriptMeta(BaseModel):
     """`output/<doc_id>.meta.json` sidecar (spec.md §2)."""
 
