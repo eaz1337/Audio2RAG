@@ -20,6 +20,7 @@ from load.render_srt import render_srt_from_jsonl
 from load.vector_store import delete_doc, reindex_all
 from load.write_canonical import meta_path, segments_path, write_canonical
 from models.schemas import Segment, TranscriptMeta, TranscriptType
+from retrieve.search import dense_search, filter_doc_ids
 from transform.asr.base import ASRBackend
 from transform.embed import Embedder
 from transform.transcribe import Transcriber
@@ -242,6 +243,49 @@ def rm(doc_id: str = typer.Argument(...)) -> None:
         raise typer.Exit(code=1)
     remove_transcript(doc_id, OUTPUT_DIR)
     delete_doc(STORE_DIR, doc_id)
+
+
+def _format_timestamp(seconds: float) -> str:
+    total = int(round(seconds))
+    hours, remainder = divmod(total, 3600)
+    minutes, secs = divmod(remainder, 60)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+
+
+@app.command()
+def search(
+    query: str = typer.Argument(...),
+    k: int = typer.Option(5, "--k"),
+    course: str | None = typer.Option(None, "--course"),
+    doc_type: TranscriptType | None = typer.Option(None, "--type"),
+    after: str | None = typer.Option(None, "--after"),
+    before: str | None = typer.Option(None, "--before"),
+    speaker: str | None = typer.Option(None, "--speaker"),
+    tag: str | None = typer.Option(None, "--tag"),
+) -> None:
+    """[STANDARD] Dense search over the local vector store: prints the `k` best-matching
+    chunks, best first, as `[title, HH:MM:SS-HH:MM:SS]  score  text`. No LLM call — this is
+    smart search, not answering. `--course/--type/--after/--before/--speaker/--tag` restrict
+    the candidate set before ranking (TASKS.md SEARCH-5)."""
+    config = load_config()
+    embedder = build_embedder(config)
+    metas = list_transcripts(OUTPUT_DIR)
+    titles = {meta.doc_id: meta.title for meta in metas}
+    doc_ids = filter_doc_ids(
+        metas,
+        course=course,
+        type=doc_type,
+        after=date_.fromisoformat(after) if after else None,
+        before=date_.fromisoformat(before) if before else None,
+        speaker=speaker,
+        tag=tag,
+    )
+
+    hits = dense_search(query, k, embedder, STORE_DIR, doc_ids=doc_ids)
+    for hit in hits:
+        title = titles.get(hit.doc_id, hit.doc_id)
+        timestamp = f"{_format_timestamp(hit.start)}-{_format_timestamp(hit.end)}"
+        typer.echo(f"[{title}, {timestamp}]\t{hit.score:.3f}\t{hit.display_text}")
 
 
 @app.command()

@@ -261,14 +261,14 @@ the wiring testable; the real `bge-reranker-v2-m3` sits behind the `[rag]` extra
 Reranking is skippable via `--no-rerank`.
 **Out of scope:** tuning candidate counts.
 
-### [ ] SEARCH-5 — `[STANDARD]` Metadata filters
+### [x] SEARCH-5 — `[STANDARD]` Metadata filters
 **Touch:** `src/retrieve/search.py`, CLI, tests
 **Done when:** `--course --type --after --before --speaker --tag` restrict results; a test with two
 courses in the corpus proves no cross-contamination. Filters apply *before* reranking and work
 identically whether reranking is enabled or not.
 **Out of scope:** natural-language filter parsing.
 
-### [ ] SEARCH-6 — `[ADVANCED]` Context expansion
+### [x] SEARCH-6 — `[ADVANCED]` Context expansion
 **Touch:** `src/retrieve/expand.py`, tests
 **Done when:** each hit is expanded with ±1 adjacent segment read from the JSONL, correctly clamped
 at document start/end, with no duplicated text when two hits are adjacent.

@@ -1,11 +1,14 @@
+from datetime import date, datetime, UTC
+
 import pytest
 from fakes import FakeEmbedder
 
 from load.vector_store import EmbeddingModelMismatch, write_chunks
-from models.schemas import Chunk, RetrievalHit
-from retrieve.search import dense_search, sparse_search
+from models.schemas import Chunk, RetrievalHit, TranscriptMeta, TranscriptType
+from retrieve.search import dense_search, filter_doc_ids, sparse_search
 
 DOC_ID = "a3f9c1b2d4e6f801"
+OTHER_DOC_ID = "b7c2e9a1f3d5e802"
 
 
 def make_chunk(**overrides):
@@ -43,6 +46,26 @@ def toy_corpus():
             embed_text="[Lecture 3, 00:00:09-00:00:14]\nRound-robin scheduling assigns each process a fixed time quantum.",
         ),
     ]
+
+
+def make_meta(doc_id: str, **overrides) -> TranscriptMeta:
+    fields = {
+        "doc_id": doc_id,
+        "source_path": "/tmp/audio.wav",
+        "sha256": "a" * 64,
+        "type": TranscriptType.LECTURE,
+        "title": "Lecture 1",
+        "course": None,
+        "speakers": {},
+        "date": None,
+        "duration_s": 12.0,
+        "language": "pl",
+        "model": "fake",
+        "tags": [],
+        "ingested_at": datetime(2026, 1, 1, tzinfo=UTC),
+    }
+    fields.update(overrides)
+    return TranscriptMeta(**fields)
 
 
 def test_dense_search_returns_empty_list_before_any_write(tmp_path):
@@ -168,3 +191,127 @@ def test_sparse_search_finds_rare_term_the_fake_dense_path_misses(tmp_path):
     assert sparse_hits[0].score > 0
     assert sparse_hits[1].score == 0
     assert sparse_hits[2].score == 0
+
+
+class TestFilterDocIds:
+    def test_returns_none_when_no_filter_is_given(self):
+        assert filter_doc_ids([make_meta(DOC_ID)]) is None
+
+    def test_course_narrows_to_matching_docs(self):
+        metas = [
+            make_meta(DOC_ID, course="Operating Systems"),
+            make_meta(OTHER_DOC_ID, course="Databases"),
+        ]
+
+        assert filter_doc_ids(metas, course="Operating Systems") == {DOC_ID}
+
+    def test_type_narrows_to_matching_docs(self):
+        metas = [
+            make_meta(DOC_ID, type=TranscriptType.LECTURE),
+            make_meta(OTHER_DOC_ID, type=TranscriptType.MEETING),
+        ]
+
+        assert filter_doc_ids(metas, type=TranscriptType.MEETING) == {OTHER_DOC_ID}
+
+    def test_after_excludes_earlier_dates_and_undated_docs(self):
+        metas = [
+            make_meta(DOC_ID, date=date(2026, 3, 1)),
+            make_meta(OTHER_DOC_ID, date=date(2026, 1, 1)),
+            make_meta("c" * 16, date=None),
+        ]
+
+        assert filter_doc_ids(metas, after=date(2026, 2, 1)) == {DOC_ID}
+
+    def test_before_excludes_later_dates_and_undated_docs(self):
+        metas = [
+            make_meta(DOC_ID, date=date(2026, 3, 1)),
+            make_meta(OTHER_DOC_ID, date=date(2026, 1, 1)),
+            make_meta("c" * 16, date=None),
+        ]
+
+        assert filter_doc_ids(metas, before=date(2026, 2, 1)) == {OTHER_DOC_ID}
+
+    def test_tag_narrows_to_matching_docs(self):
+        metas = [
+            make_meta(DOC_ID, tags=["deadlock"]),
+            make_meta(OTHER_DOC_ID, tags=["sql"]),
+        ]
+
+        assert filter_doc_ids(metas, tag="deadlock") == {DOC_ID}
+
+    def test_speaker_matches_diarized_label_or_relabeled_name(self):
+        metas = [
+            make_meta(DOC_ID, speakers={"SPEAKER_00": "Dr. Kowalski"}),
+            make_meta(OTHER_DOC_ID, speakers={"SPEAKER_00": "Ms. Nowak"}),
+        ]
+
+        assert filter_doc_ids(metas, speaker="Dr. Kowalski") == {DOC_ID}
+        assert filter_doc_ids(metas, speaker="SPEAKER_00") == {DOC_ID, OTHER_DOC_ID}
+
+    def test_combined_filters_are_conjunctive(self):
+        metas = [
+            make_meta(DOC_ID, course="Operating Systems", type=TranscriptType.LECTURE),
+            make_meta(OTHER_DOC_ID, course="Operating Systems", type=TranscriptType.MEETING),
+        ]
+
+        assert filter_doc_ids(
+            metas, course="Operating Systems", type=TranscriptType.LECTURE
+        ) == {DOC_ID}
+
+
+def test_dense_search_restricts_to_filtered_doc_ids_no_cross_contamination(tmp_path):
+    embedder = FakeEmbedder(dim=8)
+    os_chunk = make_chunk(
+        doc_id=DOC_ID,
+        chunk_id=0,
+        display_text="Deadlock occurs when all four Coffman conditions hold.",
+        embed_text="[OS Lecture, 00:00:00-00:00:04]\nDeadlock occurs when all four Coffman conditions hold.",
+    )
+    db_chunk = make_chunk(
+        doc_id=OTHER_DOC_ID,
+        chunk_id=0,
+        display_text="A B-tree index speeds up range queries.",
+        embed_text="[DB Lecture, 00:00:00-00:00:04]\nA B-tree index speeds up range queries.",
+    )
+    write_chunks([os_chunk, db_chunk], embedder, tmp_path)
+
+    hits = dense_search("deadlock", k=5, embedder=embedder, store_dir=tmp_path, doc_ids={DOC_ID})
+
+    assert hits
+    assert {hit.doc_id for hit in hits} == {DOC_ID}
+
+
+def test_dense_search_returns_empty_when_doc_ids_filter_is_empty(tmp_path):
+    embedder = FakeEmbedder(dim=8)
+    write_chunks(toy_corpus(), embedder, tmp_path)
+
+    assert dense_search("deadlock", k=5, embedder=embedder, store_dir=tmp_path, doc_ids=set()) == []
+
+
+def test_sparse_search_restricts_to_filtered_doc_ids_no_cross_contamination(tmp_path):
+    embedder = FakeEmbedder(dim=8)
+    os_chunk = make_chunk(
+        doc_id=DOC_ID,
+        chunk_id=0,
+        display_text="Deadlock occurs when all four Coffman conditions hold.",
+        embed_text="[OS Lecture, 00:00:00-00:00:04]\nDeadlock occurs when all four Coffman conditions hold.",
+    )
+    db_chunk = make_chunk(
+        doc_id=OTHER_DOC_ID,
+        chunk_id=0,
+        display_text="Deadlock in a database transaction requires a rollback.",
+        embed_text="[DB Lecture, 00:00:00-00:00:04]\nDeadlock in a database transaction requires a rollback.",
+    )
+    write_chunks([os_chunk, db_chunk], embedder, tmp_path)
+
+    hits = sparse_search("deadlock", k=5, store_dir=tmp_path, doc_ids={DOC_ID})
+
+    assert hits
+    assert {hit.doc_id for hit in hits} == {DOC_ID}
+
+
+def test_sparse_search_returns_empty_when_doc_ids_filter_is_empty(tmp_path):
+    embedder = FakeEmbedder(dim=8)
+    write_chunks(toy_corpus(), embedder, tmp_path)
+
+    assert sparse_search("scheduling", k=5, store_dir=tmp_path, doc_ids=set()) == []

@@ -6,6 +6,7 @@ from typer.testing import CliRunner
 from fakes import FakeASRBackend, FakeEmbedder
 
 import cli
+from extract.hashing import compute_sha256
 from load.vector_store import collection_metadata, read_chunks, write_chunks
 from load.write_canonical import read_meta
 from models.schemas import Chunk, Segment, TranscriptType
@@ -879,3 +880,111 @@ class TestRelabelCommand:
         )
 
         assert result.exit_code != 0
+
+
+class TestSearchCommand:
+    def test_filters_restrict_results_to_matching_course(self, tmp_path, monkeypatch):
+        output_dir = tmp_path / "output"
+        store_dir = tmp_path / "store"
+        monkeypatch.setattr(cli, "OUTPUT_DIR", output_dir)
+        monkeypatch.setattr(cli, "STORE_DIR", store_dir)
+        sample_b = FIXTURES / "sample_b.wav"
+
+        cli.ingest_file(
+            SAMPLE_A,
+            backend=FakeASRBackend(
+                [make_segment(doc_id=compute_sha256(SAMPLE_A)[:16], text="Deadlock and Coffman conditions.")]
+            ),
+            language="pl",
+            output_dir=output_dir,
+            doc_type=TranscriptType.LECTURE,
+            title="OS Lecture",
+            course="Operating Systems",
+            date=None,
+            speakers=[],
+            tags=[],
+            render_targets=[],
+            asr_model_name="fake",
+        )
+        cli.ingest_file(
+            sample_b,
+            backend=FakeASRBackend(
+                [make_segment(doc_id=compute_sha256(sample_b)[:16], text="B-tree index range queries.")]
+            ),
+            language="pl",
+            output_dir=output_dir,
+            doc_type=TranscriptType.LECTURE,
+            title="DB Lecture",
+            course="Databases",
+            date=None,
+            speakers=[],
+            tags=[],
+            render_targets=[],
+            asr_model_name="fake",
+        )
+
+        embedder = FakeEmbedder(dim=8)
+        monkeypatch.setattr(cli, "load_config", lambda: FAKE_CONFIG)
+        monkeypatch.setattr(cli, "build_embedder", lambda config: embedder)
+        reindex_result = runner.invoke(cli.app, ["reindex"])
+        assert reindex_result.exit_code == 0, reindex_result.output
+
+        result = runner.invoke(
+            cli.app, ["search", "deadlock", "--course", "Operating Systems"]
+        )
+
+        assert result.exit_code == 0, result.output
+        assert "OS Lecture" in result.output
+        assert "DB Lecture" not in result.output
+
+    def test_no_filter_searches_every_document(self, tmp_path, monkeypatch):
+        output_dir = tmp_path / "output"
+        store_dir = tmp_path / "store"
+        monkeypatch.setattr(cli, "OUTPUT_DIR", output_dir)
+        monkeypatch.setattr(cli, "STORE_DIR", store_dir)
+        sample_b = FIXTURES / "sample_b.wav"
+
+        cli.ingest_file(
+            SAMPLE_A,
+            backend=FakeASRBackend(
+                [make_segment(doc_id=compute_sha256(SAMPLE_A)[:16], text="Deadlock and Coffman conditions.")]
+            ),
+            language="pl",
+            output_dir=output_dir,
+            doc_type=TranscriptType.LECTURE,
+            title="OS Lecture",
+            course="Operating Systems",
+            date=None,
+            speakers=[],
+            tags=[],
+            render_targets=[],
+            asr_model_name="fake",
+        )
+        cli.ingest_file(
+            sample_b,
+            backend=FakeASRBackend(
+                [make_segment(doc_id=compute_sha256(sample_b)[:16], text="B-tree index range queries.")]
+            ),
+            language="pl",
+            output_dir=output_dir,
+            doc_type=TranscriptType.LECTURE,
+            title="DB Lecture",
+            course="Databases",
+            date=None,
+            speakers=[],
+            tags=[],
+            render_targets=[],
+            asr_model_name="fake",
+        )
+
+        embedder = FakeEmbedder(dim=8)
+        monkeypatch.setattr(cli, "load_config", lambda: FAKE_CONFIG)
+        monkeypatch.setattr(cli, "build_embedder", lambda config: embedder)
+        reindex_result = runner.invoke(cli.app, ["reindex"])
+        assert reindex_result.exit_code == 0, reindex_result.output
+
+        result = runner.invoke(cli.app, ["search", "deadlock", "--k", "10"])
+
+        assert result.exit_code == 0, result.output
+        assert "OS Lecture" in result.output
+        assert "DB Lecture" in result.output
