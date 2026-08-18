@@ -326,6 +326,12 @@ result next to the expected answer.
 **Done when:** you've run these on real audio and formed an opinion — "close enough to harden" or
 "chunking/retrieval is off, Advanced work is premature" — before spending time on SEARCH-2..4,6.
 **Out of scope:** recall@5 / MRR scoring — that's EVAL-1.
+**Status (2026-08-18):** harness built (`eval/smoke_questions.yaml` + `eval/run_smoke_questions.py`),
+verified only against synthetic content seeded onto `tests/fixtures/sample_a.wav`/`sample_b.wav` — no
+real recording has been ingested and no opinion has been formed yet. Left unchecked on purpose:
+Phase 7/8 work below is proceeding without this evidence, at the user's call. Before trusting
+ANSWER-1/EVAL-1 results, come back, ingest a real recording, replace the placeholder `doc_id`s in
+`eval/smoke_questions.yaml`, and re-run.
 
 ---
 
@@ -335,6 +341,11 @@ Schemas, prompts, the `LLMClient` protocol and CLI wiring from Phase 6.5 carry o
 phase's only job is to swap dense-only retrieval for the full pipeline. The refusal threshold stays
 at SMOKE-3's placeholder until EVAL-2 sets it from measured data — that ordering is deliberate, so
 this task does not depend on an eval harness that does not exist yet.
+
+**Caveat:** started without SMOKE-5's real-audio pass (see that task's Status note) — dense-only
+retrieval quality has only been checked against synthetic fixture content, never a real recording.
+If ANSWER-1/EVAL-1 results look off, the first thing to rule out is that gap, not a bug in the
+hybrid pipeline itself.
 
 ### [ ] ANSWER-1 — Wire hybrid retrieval into `ask`
 **Touch:** `src/retrieve/answer.py`, `src/cli.py`, tests

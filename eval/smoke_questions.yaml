@@ -1,0 +1,50 @@
+# SMOKE-5 reference questions (TASKS.md).
+#
+# PLACEHOLDER CONTENT: doc_id 79a6c9f0ab2dcaf2 / 0df685b41db1fc98 refer to
+# tests/fixtures/sample_a.wav / sample_b.wav, seeded with synthetic segments by
+# eval/run_smoke_questions.py — not real recordings. They exist to prove the harness
+# mechanics (yaml -> ask -> pass/fail report) before you point this at audio you
+# actually care about. Replace these entries with your own doc_id + real questions
+# once you've ingested real recordings, then re-run and form the SMOKE-5 opinion.
+#
+# Fields:
+#   question           - text passed verbatim to `ask`
+#   doc_id             - expected source document (null if the question should refuse)
+#   expected_start_s   - expected citation window, in seconds (null if expect_refusal)
+#   expected_end_s
+#   expect_refusal     - true if no chunk should clear the refusal threshold
+
+- question: "What are the four Coffman conditions for deadlock?"
+  doc_id: 79a6c9f0ab2dcaf2
+  expected_start_s: 12.0
+  expected_end_s: 16.2
+  expect_refusal: false
+
+- question: "When does a deadlock occur in an operating system?"
+  doc_id: 79a6c9f0ab2dcaf2
+  expected_start_s: 40.0
+  expected_end_s: 45.0
+  expect_refusal: false
+
+- question: "What is a race condition and how is it different from a deadlock?"
+  doc_id: 79a6c9f0ab2dcaf2
+  expected_start_s: 60.0
+  expected_end_s: 66.0
+  expect_refusal: false
+
+- question: "What does the ACID acronym stand for in database transactions?"
+  doc_id: 0df685b41db1fc98
+  expected_start_s: 10.0
+  expected_end_s: 15.0
+  expect_refusal: false
+
+# Not included here: an "unrelated question -> expect_refusal: true" case. It's
+# untestable against the synthetic fixture because eval/run_smoke_questions.py's
+# fake embedder derives vectors from a text hash, not semantics — an unrelated
+# query can score above threshold purely by chance. Add one once you're pointed at
+# the real embedder + real audio, where refusal behaves semantically.
+- question: "How does a database guarantee durability after a commit?"
+  doc_id: 0df685b41db1fc98
+  expected_start_s: 50.0
+  expected_end_s: 56.0
+  expect_refusal: false
